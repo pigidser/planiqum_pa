@@ -32,25 +32,17 @@ class ModelSelector(object):
         super().__init__()
         self.logger = logging.getLogger('planiqum_predictive_analitics.' + __name__)
 
-
+        self.model_selected = False
         self.model = None
         self.params_list = None
+        model_selectors = {'arima': ArimaSelector, 'holtwinters': HoltWintersSelector, 'prophet': ProphetSelector}
 
-        if model_type == 'arima':
-            self.model = ArimaSelector(modeling, model_type, model_params, model_name)
-
-        elif model_type == 'holtwinters':
-            self.model = HoltWintersSelector(modeling, model_type, model_params, model_name)
-
-        elif model_type == 'fbprophet':
-            self.model = FbprophetSelector(modeling, model_type, model_params, model_name)
-
-        else:
-            self.logger.error(f"Unknown model type!")
-            raise Exception
+        selector = model_selectors[model_type]
+        self.model = selector(modeling, model_type, model_params, model_name)
             
-        self.model.get_best_model()
-        self.model.fit()
+        if self.model.get_best_model():
+            self.model.fit()
+            self.model_selected = True
 
 
 
@@ -65,6 +57,14 @@ class BaseSelector(object):
         self.model_name = None
         self.model_type = None
         self.modeling = None
+        self.estimators = {'rmse': self.rmse_score, 'smape': self.smape_score}
+
+
+    def dataset_adjustment(self):
+        self.logger.debug(f"Dataset adjustment.")
+
+        self.y_train = self.modeling.train[self.modeling.dataset.target_f].values
+        self.y_test = self.modeling.test[self.modeling.dataset.target_f].values
 
 
     def get_model(self):
@@ -75,6 +75,7 @@ class BaseSelector(object):
 
         self.logger.debug(f"Seeking the best {self.model_type} model from {len(self.params_list)} variants.")
         
+        found = False
         least_error = float(Inf)
 
         for params in self.params_list:
@@ -84,23 +85,34 @@ class BaseSelector(object):
             try:
                 candidate = self.get_model(params, 'train')
                 # Prediction for the test part.
-                y_pred = self.predict(candidate)
-                error = self.average_error(self.modeling.y_test, y_pred)
+                y_pred = self.predict(candidate, params)
+                error = self.get_estimation(self.y_test, y_pred)
 
-                if error < least_error:
+                if np.isnan(error):
+                    self.logger.warning(f"Cannot estimate a model.")
+
+                elif error < least_error:
                     least_error = error
                     best_params = params
                     best_y_pred = y_pred
                     best_model = candidate
+                    found = True
+                    self.logger.debug(f"Found a better model.")
 
             except Exception as e:
                 self.logger.error(e)
 
-        self.best_y_pred = best_y_pred
-        self.best_params = best_params
-        self.best_model = best_model
+        if found:
+            self.best_y_pred = best_y_pred
+            self.best_params = best_params
+            self.best_model = best_model
 
-        self.logger.debug(f"Best parameters: {self.best_params}.")
+            self.logger.debug(f"Found the best model with parameters: {self.best_params}.")
+
+        else:
+            self.logger.warning(f"Cannot create a model. Bad time series or try other parameters.")
+
+        return found
 
 
     def fit(self):
@@ -121,8 +133,22 @@ class BaseSelector(object):
         return (np.sum(np.power((forecast - actuals), 2)) / len(actuals))**(1/2)
 
 
-    def average_error(self, actuals, forecast):
-        return 1/2 * (self.rmse_score(actuals, forecast) + self.smape_score(actuals, forecast))
+    def get_estimation(self, actuals, forecast):
+
+        estimations = []
+
+        for metric in self.modeling.metric_list:
+
+            f = self.estimators[metric]
+            e = f(actuals, forecast)
+            if not np.isnan(e):
+                estimations.append(e)
+
+        if len(estimations) == 0:
+            return np.nan
+        
+        else:
+            return np.sum(estimations) / len(estimations)
 
 
     def warning_param_unknown(self, param_name):
@@ -142,6 +168,7 @@ class ArimaSelector(BaseSelector):
         self.model_type = model_type
         self.model_name = model_name
         self.verify_params(model_params)
+        self.dataset_adjustment()
 
 
     def verify_params(self, params):
@@ -152,24 +179,28 @@ class ArimaSelector(BaseSelector):
         use_date_featurizer = [True, False]
         with_day_of_week = [True, False]
         with_day_of_month = [True, False]
-        stepwise = [True, False]
+        stepwise = [True]
+        m = [1]
 
         for param in params:
             
-            if param == 'use_box_cox_endog_transformer':
+            if param == 'use_boxcox':
                 use_boxcox = [bool(params[param])]
             
             elif param == 'use_date_featurizer':
                 use_date_featurizer = [bool(params[param])]
             
-            elif param == 'date_featurizer_with_day_of_week':
+            elif param == 'with_day_of_week':
                 with_day_of_week = [bool(params[param])]
             
-            elif param == 'date_featurizer_with_day_of_month':
+            elif param == 'with_day_of_month':
                 with_day_of_month = [bool(params[param])]
             
             elif param == 'stepwise':
                 stepwise = [bool(params[param])]
+
+            elif param == 'm':
+                m = [int(params[param])]
 
             else:
                 self.warning_param_unknown(param)
@@ -185,15 +216,35 @@ class ArimaSelector(BaseSelector):
                 self.logger.warning(f"Wrong parameters. DataFeaturizer cannot be used as interval_f is not specified.")
                 use_date_featurizer = [False]
 
-        # All models for brute force
-        for b in use_boxcox:
-            for d in use_date_featurizer:
-                for w in with_day_of_week:
-                    for m in with_day_of_month:
-                        for s in stepwise:
+        # All combination of parameters for brute force
+        for s in stepwise:
+            for m1 in m:
+                for b in use_boxcox:
+                    for d in use_date_featurizer:
+                        if not d:
+                            # "with_day_" parameters make sense with Date Featurizer only.
+                            d_w, d_m = False, False
                             self.params_list.append({
-                                'use_boxcox': b, 'use_date_featurizer': d, 'with_day_of_week': w,
-                                'with_day_of_month': m, 'stepwise': s})
+                                'use_boxcox': b, 'use_date_featurizer': d, 'with_day_of_week': d_w,
+                                'with_day_of_month': d_m, 'stepwise': s, 'm': m1})
+                        else:
+                            for d_w in with_day_of_week:
+                                for d_m in with_day_of_month:
+                                    self.params_list.append({
+                                        'use_boxcox': b, 'use_date_featurizer': d, 'with_day_of_week': d_w,
+                                        'with_day_of_month': d_m, 'stepwise': s, 'm': m1})
+
+
+    def dataset_adjustment(self):
+        super().dataset_adjustment()
+        
+        # Arima requires X_train with timedate stamp for the Date Featurizer
+        if self.modeling.dataset.interval_f is None:
+            self.X_train, self.X_test = None, None
+        else:
+            # X_ part available only when column interval_f is specified 
+            self.X_train = self.modeling.train[[self.modeling.dataset.interval_f]]
+            self.X_test = self.modeling.test[[self.modeling.dataset.interval_f]]    
 
 
     def get_model(self, params, mode):
@@ -203,13 +254,14 @@ class ArimaSelector(BaseSelector):
         with_day_of_week = params['with_day_of_week']
         with_day_of_month = params['with_day_of_month']
         stepwise = params['stepwise']
+        m = params['m']
 
         if mode == 'full':
-            y = np.concatenate([self.modeling.y_train, self.modeling.y_test])
-            X = np.concatenate([self.modeling.X_train, self.modeling.X_test])
+            y = np.concatenate([self.y_train, self.y_test])
+            X = np.concatenate([self.X_train, self.X_test])
         elif mode == 'train':
-            y = self.modeling.y_train
-            X = self.modeling.X_train
+            y = self.y_train
+            X = self.X_train
         else:
             self.logger.error(f"The 'mode' parameter should be 'full' or 'train'!")
             raise Exception
@@ -233,7 +285,8 @@ class ArimaSelector(BaseSelector):
         steps.append(('step_arima', arima.AutoARIMA(d=n_diffs, trace=3,
             stepwise=stepwise,
             suppress_warnings=True,
-            seasonal=True)))
+            seasonal=True,
+            m=m)))
 
         model = pipeline.Pipeline(steps)
 
@@ -247,19 +300,19 @@ class ArimaSelector(BaseSelector):
         return model
 
 
-    def predict(self, model):
+    def predict(self, model, params):
         super().predict()
-        return model.predict(X=self.modeling.X_test, n_periods=self.modeling.n_intervals_estimation)
+        return model.predict(X=self.X_test, n_periods=self.modeling.n_intervals_estimation)
 
     
     def fit(self):
 
         # Update the pipeline with the test part 
         if self.best_params['use_date_featurizer']:
-            self.best_model.update(self.modeling.y_test, self.modeling.X_test)
+            self.best_model.update(self.y_test, self.X_test)
         
         else:
-            self.best_model.update(self.modeling.y_test)
+            self.best_model.update(self.y_test)
 
 
 
@@ -271,6 +324,7 @@ class HoltWintersSelector(BaseSelector):
         self.model_type = model_type
         self.model_name = model_name
         self.verify_params(model_params)
+        self.dataset_adjustment()
 
 
     def verify_params(self, params):
@@ -302,7 +356,7 @@ class HoltWintersSelector(BaseSelector):
                     self.warning_param_bad_value(param, params[param])
             
             elif param == 'seasonal_periods':
-                seasonal_periods = int(params[param])
+                seasonal_periods = [int(params[param])]
             
             elif param == 'use_boxcox':
                 use_boxcox = [bool(params[param])]
@@ -336,6 +390,17 @@ class HoltWintersSelector(BaseSelector):
                                      'use_boxcox': b, 'remove_bias': r})
 
 
+    def dataset_adjustment(self):
+        super().dataset_adjustment()
+
+        # if self.modeling.dataset.interval_f is None:
+        #     self.X_train, self.X_test = None, None
+        # else:
+        #     # X_ part available only when column interval_f is specified 
+        #     self.X_train = self.train[[self.modeling.dataset.interval_f]]
+        #     self.X_test = self.test[[self.modeling.dataset.interval_f]]
+
+
     def get_model(self, params, mode):
 
         trend = params['trend']
@@ -346,9 +411,9 @@ class HoltWintersSelector(BaseSelector):
         remove_bias = params['remove_bias']
 
         if mode == 'full':
-            y = np.concatenate([self.modeling.y_train, self.modeling.y_test])
+            y = np.concatenate([self.y_train, self.y_test])
         elif mode == 'train':
-            y = self.modeling.y_train
+            y = self.y_train
         else:
             self.logger.error(f"The 'mode' parameter should be 'full' or 'train'!")
             raise Exception
@@ -368,19 +433,18 @@ class HoltWintersSelector(BaseSelector):
         return fitted
 
 
-    def predict(self, model):
+    def predict(self, model, params):
         super().predict()
         return model.forecast(steps=self.modeling.n_intervals_estimation)
 
     
     def fit(self):
 
-        # self.best_model = self.get_model(self.best_params, np.concatenate([self.modeling.y_train, self.modeling.y_test]))
         self.best_model = self.get_model(self.best_params, 'full')
 
 
 
-class FbprophetSelector(BaseSelector):
+class ProphetSelector(BaseSelector):
 
     def __init__(self, modeling, model_type, model_params, model_name):
         super().__init__()
@@ -388,6 +452,7 @@ class FbprophetSelector(BaseSelector):
         self.model_type = model_type
         self.model_name = model_name
         self.verify_params(model_params)
+        self.dataset_adjustment()
 
 
     def verify_params(self, params):
@@ -399,6 +464,7 @@ class FbprophetSelector(BaseSelector):
         weekly_seasonality = [True, False]       # Fit weekly seasonality.
         daily_seasonality = [True, False]        # Fit daily seasonality.
         seasonality_mode = ['additive', 'multiplicative']
+        freq = None
 
         for param in params:
             
@@ -432,8 +498,20 @@ class FbprophetSelector(BaseSelector):
                 else:
                     self.warning_param_bad_value(param, params[param])
 
+            elif param == 'freq':
+                freq = params[param]
+
             else:
                 self.warning_param_unknown(param)
+
+        if freq is None:
+            if self.modeling.dataset.discrete_interval == 'day':
+                freq = 'D'
+            else:
+                self.logger.error(f"The frequency parameter is mandatory if the discrete interval is not equal to 'day'.")
+                self.logger.info(f"Example of freq: 'D' for day, 'MS' for month start, 'M' for month end.")
+                self.logger.info(f"https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#timeseries-offset-aliases")
+                raise Exception
 
         # All models for brute force
         for g in growth:
@@ -443,7 +521,21 @@ class FbprophetSelector(BaseSelector):
                         for s in seasonality_mode:
                             self.params_list.append({
                                 'growth': g, 'yearly_seasonality': y, 'weekly_seasonality': w,
-                                'daily_seasonality': d, 'seasonality_mode': s})
+                                'daily_seasonality': d, 'seasonality_mode': s, 'freq': freq})
+
+
+    def dataset_adjustment(self):
+        super().dataset_adjustment()
+        
+        if self.modeling.dataset.interval_f is None:
+            self.logger.error(f"Prophet requires an interval field that can be cast to DateTime.")
+            raise Exception
+            
+        # Prophet requires dataframe with ds and y columns
+        self.ds_y_train = self.modeling.train[[self.modeling.dataset.interval_f, self.modeling.dataset.target_f]]
+        self.ds_y_train.columns = ['ds', 'y']
+        self.ds_y_test = self.modeling.test[[self.modeling.dataset.interval_f, self.modeling.dataset.target_f]]
+        self.ds_y_test.columns = ['ds', 'y']
 
 
     def get_model(self, params, mode):
@@ -464,9 +556,9 @@ class FbprophetSelector(BaseSelector):
             holidays=None)
 
         if mode == 'full':
-            df = pd.concat([self.modeling.ds_y_train, self.modeling.ds_y_test])
+            df = pd.concat([self.ds_y_train, self.ds_y_test])
         elif mode == 'train':
-            df = self.modeling.ds_y_train
+            df = self.ds_y_train
         else:
             self.logger.error(f"The 'mode' parameter should be 'full' or 'train'!")
             raise Exception
@@ -476,16 +568,18 @@ class FbprophetSelector(BaseSelector):
         return model
 
 
-    def predict(self, model):
+    def predict(self, model, params):
         super().predict()
-        future = model.make_future_dataframe(periods=self.modeling.n_intervals_estimation)
+
+        freq = params['freq']
+        future = model.make_future_dataframe(periods=self.modeling.n_intervals_estimation, freq=freq)
         forecast = model.predict(future)
+        
         return forecast['yhat'][-self.modeling.n_intervals_estimation:]
 
     
     def fit(self):
 
-        # self.best_model = self.get_model(self.best_params, np.concatenate([self.modeling.ds_y_train, self.modeling.ds_y_test]))
         self.best_model = self.get_model(self.best_params, 'full')
 
 

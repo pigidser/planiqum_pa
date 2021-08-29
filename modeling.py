@@ -27,6 +27,7 @@ class Modeling(object):
         self.n_intervals_estimation = n_intervals_estimation
         self.define_dimension_values(dimension_values)
         self.model_list = []
+        self.metric_list = []
         
 
     def load_model_base(self, folder):
@@ -76,9 +77,29 @@ class Modeling(object):
                     self.logger.debug(f"Parameter dimension_values consists of unknown values. All {len(self.dimension_values)} existing values will be taken for modeling.")
 
 
+    def define_metrics(self, metrics):
+        """
+        Define a list of metrics that will be used for estimation.
+        Parameters
+        ----------
+            metrics : string or list of strings
+                Metrics.
+        """
+
+        if isinstance(metrics, str):
+            metrics = [metrics]
+
+        if isinstance(metrics, list):
+            for metric in metrics:
+                if metric in ['rmse', 'smape']:
+                    self.metric_list.append(metric)
+                else:
+                    self.logger.warning(f"Unknown or unsupported metric '{metric}'")
+
+
     def add_model(self, model_type, model_params, model_name='best_model'):
 
-        if model_type not in ['arima','holtwinters','fbprophet']:
+        if model_type not in ['arima', 'holtwinters', 'prophet']:
             self.logger.warning("Model type {model_type} is not supported.")
             return False
 
@@ -95,6 +116,10 @@ class Modeling(object):
 
         if len(self.model_list) == 0:
             self.logger.warning(f"Model list is empty. Use add_model method to create a list of models.")
+            return
+
+        if len(self.metric_list) == 0:
+            self.logger.warning(f"Metric list is empty. Use define_metric method to add one or several metric.")
             return
 
         self.logger.debug(f"Run modeling.")
@@ -126,7 +151,7 @@ class Modeling(object):
     def create_models(self):
         self.train_test_split()
         for model in self.model_list:
-            self.estimate_model(model)
+            self.select_model(model)
 
 
     def train_test_split(self):
@@ -134,26 +159,10 @@ class Modeling(object):
         self.train = self.cur_ts.iloc[:len(self.cur_ts) - self.n_intervals_estimation]
         self.test = self.cur_ts.iloc[-self.n_intervals_estimation:]
         
-        self.y_train = self.train[self.dataset.target_f].values
-        self.y_test = self.test[self.dataset.target_f].values
-
-        if self.dataset.interval_f is None:
-            self.X_train, self.X_test = None, None
-        else:
-            # X_ part available only when column interval_f is specified 
-            self.X_train = self.train[[self.dataset.interval_f]]
-            self.X_test = self.test[[self.dataset.interval_f]]
-        
-        # Dataset for fbprophet
-        self.ds_y_train = self.train[[self.dataset.interval_f, self.dataset.target_f]]
-        self.ds_y_train.columns = ['ds', 'y']
-        self.ds_y_test = self.test[[self.dataset.interval_f, self.dataset.target_f]]
-        self.ds_y_test.columns = ['ds', 'y']
-
         self.logger.debug(f"Train test split. Train part len={len(self.train)}, test part len={len(self.test)}.")
 
 
-    def estimate_model(self, model):
+    def select_model(self, model):
 
         model_type = model[0]
         model_parameters = model[1]
@@ -169,11 +178,15 @@ class Modeling(object):
         # Find the best model and fit
         selector = ModelSelector(self, model_type, model_parameters, model_name)
 
-        print(f"SMAPE = {selector.model.smape_score(self.y_test, selector.model.best_y_pred)}")
-        print(f"RMSE = {selector.model.rmse_score(self.y_test, selector.model.best_y_pred)}")
+        if selector.model_selected:
+            self.logger.debug(f"SMAPE = {selector.model.smape_score(selector.model.y_test, selector.model.best_y_pred)}")
+            self.logger.debug(f"RMSE = {selector.model.rmse_score(selector.model.y_test, selector.model.best_y_pred)}")
 
-        self.save_plot(self.y_train, self.y_test, selector.model.best_y_pred, plot_file_name)
-        self.save_model(selector.model.best_model, model_file_name)
+            self.save_plot(selector.model.y_train, selector.model.y_test, selector.model.best_y_pred, plot_file_name)
+            self.save_model(selector.model.best_model, model_file_name)
+
+        else:
+            self.logger.warning(f"Cannot select a model with parameters above.")
 
 
     def save_model(self, model, model_file_name):

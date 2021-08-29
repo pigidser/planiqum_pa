@@ -15,7 +15,7 @@ class Dataset(object):
     """
     Represent dataset and provide initial checks and transformations.
     Parameters
-        ----------
+    ----------
         filename : string
             File name without path.
         target_f:
@@ -156,39 +156,34 @@ class Dataset(object):
 
         min_date = min(self.data[self.interval_f])
         max_date = max(self.data[self.interval_f])
-        # Arrange an array of datetime elements and convert to DataFrame
-        tl = pd.DataFrame(np.arange(min_date, max_date, timedelta(days=1)).astype(datetime))
-        tl.columns = [self.interval_f]
-        tl.set_index(self.interval_f, inplace=True)
-        
-        exp_df = pd.DataFrame()
+
+        interval_td = timedelta(days=1)
+
+        # Timeline template
+        tl = pd.DataFrame(np.arange(min_date, max_date + interval_td, interval_td).astype(datetime), columns=[self.interval_f])
 
         if self.dimension_f is None:
-            self.logger.debug(f"dimension_f is None.")
-            ts = self.data.copy()
-            ts.set_index(self.interval_f, inplace=True)
-            ts = tl.merge(ts, how='left', left_index=True, right_index=True)
-            ts[self.target_f].fillna(0, inplace=True)
-            exp_df = pd.concat([exp_df, ts], axis=0)
-            exp_df.reset_index(inplace=True)
+            self.logger.debug(f"Dimension field is not specified.")
+            exp_ts = tl.merge(self.data, on=[self.interval_f], how='left').fillna(0)
 
         elif isinstance(self.dimension_f, str):
             self.logger.debug(f"dimension_f is '{self.dimension_f}'.")
-            for dim in self.data[self.dimension_f].unique():
-                ts = self.data[self.data[self.dimension_f]==dim].copy()
-                ts.set_index(self.interval_f, inplace=True)
-                ts = tl.merge(ts, how='left', left_index=True, right_index=True)
-                ts[self.dimension_f].fillna(dim, inplace=True)
-                ts[self.target_f].fillna(0, inplace=True)
-                exp_df = pd.concat([exp_df, ts], axis=0)
-            exp_df.reset_index(inplace=True)
-            exp_df[self.dimension_f] = exp_df[self.dimension_f].astype(int)
+
+            # Product template
+            dimensions = pd.DataFrame(self.data[self.dimension_f].drop_duplicates(), columns=[self.dimension_f])
+            dimensions['dummy'] = np.NaN
+
+            tl['dummy'] = np.NaN
+
+            # Interval/dimension template
+            tmpl = tl.merge(dimensions, on='dummy', how='outer').drop('dummy', axis='columns')
+            exp_ts = tmpl.merge(self.data, on=[self.dimension_f, self.interval_f], how='left').fillna(0)
 
         elif isinstance(self.dimension_f, list):
             self.logger.debug(f"dimension_f is '{', '.join(self.dimension_f)}'.")
             self.logger.error(f"Several column dimension is not supported!")
             raise Exception
 
-        self.data = exp_df
+        self.data = exp_ts
 
         self.logger.debug(f"Timeline is expanded.")

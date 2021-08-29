@@ -53,44 +53,79 @@ def main():
 
         # Initialize
         if operation.lower() == 'estimation':
-            logger.info(f"Initialization of time series data from {data_file}")
-                
+            logger.debug(f"Initialization of time series data from {data_file}")
+            
+            ### Test 1
+
+            # Load a dataset and define fields purpose.
             data = Dataset(
-                filename='./data/orders - product 2354.csv',
+                filename='./data/orders.csv',
                 target_f='Quantity',
                 discrete_interval='day',
                 interval_f='Date',
-                dimension_f='ProductId',
-                )
+                dimension_f='ProductId')
 
+            # Create modeling object and define number of intervals for estimation.
             modeling = Modeling(data, "model_base", n_intervals_estimation=28)
 
-            modeling.add_model('arima', {
-                'use_box_cox_endog_transformer' : True,
-                'use_date_featurizer': True,
-                'date_featurizer_with_day_of_week' : True,
-                'date_featurizer_with_day_of_month' : False,
-                'stepwise': True,
-                })
+            # Our dataset includes many products. Let's choose several for test.
+            modeling.define_dimension_values([370, 2354, 2819])
+            
+            # Add ARIMA
+            modeling.add_model(
+                model_type='arima',
+                model_params={'use_boxcox' : True, 'use_date_featurizer': True, 'with_day_of_week' : True, 'with_day_of_month' : False, 'stepwise': True,},
+                model_name='test1')
+            # Add Holt-Winter's
+            modeling.add_model(
+                model_type='holtwinters',
+                model_params={'trend': 'mul', 'damped_trend': False, 'seasonal': 'add', 'seasonal_periods': 7, 'use_boxcox': False, 'remove_bias': True,},
+                model_name='test1')
 
-            modeling.add_model('holtwinters', {
-                # 'trend' : None,
-                # 'damped_trend': None,
-                # 'seasonal' : None,
-                'seasonal_period' : 7,
-                'use_boxcox' : False,
-                'remove_bias': True,
-                })
+            # Add Prophet
+            modeling.add_model(
+                model_type='prophet',
+                model_params={'freq': 'D', 'growth': 'linear', 'yearly_seasonality': False, 'weekly_seasonality': True, 'daily_seasonality': False, 'seasonality_mode': 'additive',},
+                model_name='test1')
 
-            modeling.add_model('fbprophet', {})
+            # Select a metric
+            modeling.define_metrics(['rmse'])
 
+            # Run creation of the best models
+            modeling.run_modeling(recalculate=True)
+
+
+            ### Test 2
+
+            data = Dataset(
+                filename='./data/example_retail_sales.csv',
+                target_f='y',
+                discrete_interval='month',
+                interval_f='ds',
+                dimension_f=None)
+
+            modeling = Modeling(data, "model_base", n_intervals_estimation=28)
+            modeling.add_model(
+                model_type='arima',
+                model_params={'m': 12},
+                model_name='test2')
+            modeling.add_model(
+                model_type='holtwinters',
+                model_params={'seasonal_periods': 12},
+                model_name='test2')
+            modeling.add_model(
+                model_type='prophet',
+                model_params={'freq': 'MS', 'yearly_seasonality': True, 'seasonality_mode': 'additive'},
+                model_name='test2')
+            
+            modeling.define_metrics(['rmse','smape'])
             modeling.run_modeling(recalculate=True)
 
         else:
             logger.error(f"Operation type '{operation}' is not supported.")
             sys.exit(1)
 
-        logger.info(f"Total elapsed time {time() - t0:.3f} sec.")
+        logger.debug(f"Total elapsed time {time() - t0:.3f} sec.")
     
     except Exception as err:
         logger.exception(err)
