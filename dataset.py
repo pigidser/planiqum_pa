@@ -32,7 +32,7 @@ class Dataset(object):
     def __init__(self, filename, target_f, discrete_interval, interval_f=None, dimension_f=None):
 
         super().__init__()
-        self.logger = logging.getLogger('planiqum_forecast_application.' + __name__)
+        self.logger = logging.getLogger('planiqum_predictive_analitics.' + __name__)
         if not os.path.isfile(filename):
             self.logger.error(f"Data file '{filename}' not found!")
             raise Exception

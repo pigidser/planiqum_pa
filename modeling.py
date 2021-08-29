@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 
 
 from dataset import Dataset
-from models import ArimaModel
+from models import ModelSelector
 
 
 class Modeling(object):
@@ -21,7 +21,7 @@ class Modeling(object):
     """
     def __init__(self, dataset, folder, n_intervals_estimation, dimension_values=None):
         super().__init__()
-        self.logger = logging.getLogger('planiqum_forecast_application.' + __name__)
+        self.logger = logging.getLogger('planiqum_predictive_analitics.' + __name__)
         self.dataset = dataset
         self.load_model_base(folder)
         self.n_intervals_estimation = n_intervals_estimation
@@ -76,14 +76,27 @@ class Modeling(object):
                     self.logger.debug(f"Parameter dimension_values consists of unknown values. All {len(self.dimension_values)} existing values will be taken for modeling.")
 
 
-    def add_model(self, name, params):
-        if not isinstance(params, dict):
-            raise Exception("params must be dictionary")
-        self.model_list.append((name, params))
-        self.logger.debug(f"The model '{name} is added with params {params}.")
+    def add_model(self, model_type, model_params, model_name='best_model'):
 
+        if model_type not in ['arima','holtwinters','fbprophet']:
+            self.logger.warning("Model type {model_type} is not supported.")
+            return False
+
+        if not isinstance(model_params, dict):
+            self.logger.warning("Model params must be dictionary.")
+            return False
+
+        self.model_list.append((model_type, model_params, model_name))
+        self.logger.debug(f"The model '{model_name} is added with params {model_params}.")
+        
+        return True
 
     def run_modeling(self, recalculate=True):
+
+        if len(self.model_list) == 0:
+            self.logger.warning(f"Model list is empty. Use add_model method to create a list of models.")
+            return
+
         self.logger.debug(f"Run modeling.")
 
         self.recalculate = recalculate
@@ -117,61 +130,56 @@ class Modeling(object):
 
 
     def train_test_split(self):
+        
         self.train = self.cur_ts.iloc[:len(self.cur_ts) - self.n_intervals_estimation]
         self.test = self.cur_ts.iloc[-self.n_intervals_estimation:]
+        
         self.y_train = self.train[self.dataset.target_f].values
         self.y_test = self.test[self.dataset.target_f].values
+
         if self.dataset.interval_f is None:
             self.X_train, self.X_test = None, None
         else:
             # X_ part available only when column interval_f is specified 
             self.X_train = self.train[[self.dataset.interval_f]]
             self.X_test = self.test[[self.dataset.interval_f]]
+        
+        # Dataset for fbprophet
+        self.ds_y_train = self.train[[self.dataset.interval_f, self.dataset.target_f]]
+        self.ds_y_train.columns = ['ds', 'y']
+        self.ds_y_test = self.test[[self.dataset.interval_f, self.dataset.target_f]]
+        self.ds_y_test.columns = ['ds', 'y']
 
         self.logger.debug(f"Train test split. Train part len={len(self.train)}, test part len={len(self.test)}.")
 
 
     def estimate_model(self, model):
 
-        model_name = model[0]
-        model_type = model_name.split("-")[0]
+        model_type = model[0]
         model_parameters = model[1]
+        model_name = model[2]
         model_file_name = os.path.join(self.model_base_folder, f"{self.cur_dim_val}_{model_type}_{model_name}.pkl")
         plot_file_name = os.path.join(self.model_base_folder, f"{self.cur_dim_val}_{model_type}_{model_name}.png")
-
-        if model_type not in ['arima','holtwinters','fbprophet']:
-            self.logger.error("Model type {model_type} is unknown.")
-            raise Exception
 
         # if self.select_model(self.cur_dim_val, model_name) and not self.recalculate:
         if os.path.isfile(model_file_name) and not self.recalculate:
             self.logger.debug(f"The model {model_name} exists for dimension value {self.cur_dim_val} and recalculation is not requested.")
             return
 
-        elif model_type == 'arima':
-            estimator = ArimaModel(self, model_name, model_parameters)
-            estimator.fit()
-            print(f"SMAPE = {estimator.smape_score()}")
-            print(f"RMSE = {estimator.rmse_score()}")
+        # Find the best model and fit
+        selector = ModelSelector(self, model_type, model_parameters, model_name)
 
-            # print(f"SMAPE = {self.smape_score(self.y_test, estimator.y_pred)}")
-            # print(f"RMSE = {self.rmse_score(self.y_test, estimator.y_pred)}")
-            self.save_plot(self.y_train, self.y_test, estimator.y_pred, plot_file_name)
-            self.save_model(estimator.model, model_file_name)
+        print(f"SMAPE = {selector.model.smape_score(self.y_test, selector.model.best_y_pred)}")
+        print(f"RMSE = {selector.model.rmse_score(self.y_test, selector.model.best_y_pred)}")
+
+        self.save_plot(self.y_train, self.y_test, selector.model.best_y_pred, plot_file_name)
+        self.save_model(selector.model.best_model, model_file_name)
 
 
     def save_model(self, model, model_file_name):
         # Save the model
         joblib.dump(model, model_file_name, compress=3)
-            
-
-    # def smape_score(self, actuals, forecast):
-    #     return (100/len(actuals) * np.sum(np.abs((forecast - actuals)) / ((np.abs(actuals) + np.abs(forecast)) / 2)))
-
-
-    # def rmse_score(self, actuals, forecast):
-    #     return (np.sum(np.power((forecast - actuals), 2)) / len(actuals))**(1/2)
-
+    
 
     def save_plot(self, y_train, actuals, forecast, plot_file_name):
         fig = plt.figure(figsize=(16, 8))
