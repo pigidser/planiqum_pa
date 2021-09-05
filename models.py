@@ -26,25 +26,6 @@ from utilities import *
 # from dataset import Dataset
 
 
-class ModelSelector(object):
-
-    def __init__(self, modeling, model_type, model_params, model_name):
-        super().__init__()
-        self.logger = logging.getLogger('planiqum_predictive_analitics.' + __name__)
-
-        self.model_selected = False
-        self.model = None
-        self.params_list = None
-        model_selectors = {'arima': ArimaSelector, 'holtwinters': HoltWintersSelector, 'prophet': ProphetSelector}
-
-        selector = model_selectors[model_type]
-        self.model = selector(modeling, model_type, model_params, model_name)
-            
-        if self.model.get_best_model():
-            self.model.fit()
-            self.model_selected = True
-
-
 
 class BaseSelector(object):
 
@@ -54,8 +35,6 @@ class BaseSelector(object):
         self.best_params = None
         self.best_model = None
         self.best_y_pred = None
-        self.model_name = None
-        self.model_type = None
         self.modeling = None
         self.estimators = {'rmse': self.rmse_score, 'smape': self.smape_score}
 
@@ -63,8 +42,8 @@ class BaseSelector(object):
     def dataset_adjustment(self):
         self.logger.debug(f"Dataset adjustment.")
 
-        self.y_train = self.modeling.train[self.modeling.dataset.target_f].values
-        self.y_test = self.modeling.test[self.modeling.dataset.target_f].values
+        self.y_train = self.modeling.train[self.modeling.dataset.target_col].values
+        self.y_test = self.modeling.test[self.modeling.dataset.target_col].values
 
 
     def get_model(self):
@@ -73,7 +52,7 @@ class BaseSelector(object):
 
     def get_best_model(self):
 
-        self.logger.debug(f"Seeking the best {self.model_type} model from {len(self.params_list)} variants.")
+        self.logger.debug(f"Seeking the best model from {len(self.params_list)} variants.")
         
         found = False
         least_error = float(Inf)
@@ -135,21 +114,9 @@ class BaseSelector(object):
 
     def get_estimation(self, actuals, forecast):
 
-        estimations = []
-
-        for metric in self.modeling.metric_list:
-
-            f = self.estimators[metric]
-            e = f(actuals, forecast)
-            if not np.isnan(e):
-                estimations.append(e)
-
-        if len(estimations) == 0:
-            return np.nan
+        f = self.estimators[self.modeling.metric]
+        return f(actuals, forecast)
         
-        else:
-            return np.sum(estimations) / len(estimations)
-
 
     def warning_param_unknown(self, param_name):
         self.logger.warning(f"Parameter {param_name} is unknown.")
@@ -162,29 +129,40 @@ class BaseSelector(object):
 
 class ArimaSelector(BaseSelector):
 
-    def __init__(self, modeling, model_type, model_params, model_name):
+    def __init__(self, modeling, init_params):
         super().__init__()
         self.modeling = modeling
-        self.model_type = model_type
-        self.model_name = model_name
-        self.verify_params(model_params)
+        self.verify_params(init_params)
         self.dataset_adjustment()
 
 
     def verify_params(self, params):
-        self.logger.debug(f"Verify parameters for {self.model_name}.")
+        self.logger.debug(f"Verify parameters.")
 
         # Default parameters.
+        seasonal = [True]
+        m = [1]
+        stepwise = [True]
         use_boxcox = [True, False]
-        use_date_featurizer = [True, False]
+        use_date_featurizer = [False]
         with_day_of_week = [True, False]
         with_day_of_month = [True, False]
-        stepwise = [True]
-        m = [1]
+        use_fourier_featurizer = [False]
+        fourier_featurizer_m = [None]
+        fourier_featurizer_k = [None]
 
         for param in params:
             
-            if param == 'use_boxcox':
+            if param == 'seasonal':
+                seasonal = [bool(params[param])]
+
+            elif param == 'm':
+                m = [int(params[param])]
+
+            elif param == 'stepwise':
+                stepwise = [bool(params[param])]
+
+            elif param == 'use_boxcox':
                 use_boxcox = [bool(params[param])]
             
             elif param == 'use_date_featurizer':
@@ -195,66 +173,88 @@ class ArimaSelector(BaseSelector):
             
             elif param == 'with_day_of_month':
                 with_day_of_month = [bool(params[param])]
-            
-            elif param == 'stepwise':
-                stepwise = [bool(params[param])]
 
-            elif param == 'm':
-                m = [int(params[param])]
+            elif param == 'use_fourier_featurizer':
+                use_fourier_featurizer = [bool(params[param])]
+
+            elif param == 'fourier_featurizer_m':
+                fourier_featurizer_m = [int(params[param])]
+
+            elif param == 'fourier_featurizer_k':
+                fourier_featurizer_k = [int(params[param])]
 
             else:
                 self.warning_param_unknown(param)
 
         # Verify parameters
-        if self.modeling.dataset.discrete_interval != 'day':
-            if True in use_date_featurizer:
-                self.logger.warning(f"Wrong parameters. DataFeaturizer cannot be used if discrete_interval is not equal 'day'.")
+        if (self.modeling.dataset.discrete_interval != 'day' or self.modeling.dataset.date_col is None) \
+            and (True in use_date_featurizer):
+                self.logger.warning(f"Wrong initial parameters. DataFeaturizer can use with discrete_interval 'day' and specified date_col!")
                 use_date_featurizer = [False]
 
-        if self.modeling.dataset.interval_f is None:
-            if True in use_date_featurizer:
-                self.logger.warning(f"Wrong parameters. DataFeaturizer cannot be used as interval_f is not specified.")
-                use_date_featurizer = [False]
+        if True in use_fourier_featurizer and (None in fourier_featurizer_m):
+            if self.modeling.dataset.discrete_interval == 'day':
+                fourier_featurizer_m = [365]
+            elif self.modeling.dataset.discrete_interval == 'week':
+                fourier_featurizer_m = [52]
+            elif self.modeling.dataset.discrete_interval == 'month':
+                fourier_featurizer_m = [12]
+            elif self.modeling.dataset.discrete_interval == 'period':
+                fourier_featurizer_m = [13]
+            self.logger.warning(f"Wrong initial parameters. Parameter m for Fourier Featurizer is setup with default value '{fourier_featurizer_m[0]}'!")
+            
+        if True in use_fourier_featurizer and (None in fourier_featurizer_k):
+            fourier_featurizer_k = [4]
+            self.logger.warning(f"Wrong initial parameters. Parameter k for Fourier Featurizer is setup with default value '{fourier_featurizer_k[0]}'!")
 
         # All combination of parameters for brute force
-        for s in stepwise:
-            for m1 in m:
-                for b in use_boxcox:
-                    for d in use_date_featurizer:
-                        if not d:
-                            # "with_day_" parameters make sense with Date Featurizer only.
-                            d_w, d_m = False, False
-                            self.params_list.append({
-                                'use_boxcox': b, 'use_date_featurizer': d, 'with_day_of_week': d_w,
-                                'with_day_of_month': d_m, 'stepwise': s, 'm': m1})
-                        else:
-                            for d_w in with_day_of_week:
-                                for d_m in with_day_of_month:
-                                    self.params_list.append({
-                                        'use_boxcox': b, 'use_date_featurizer': d, 'with_day_of_week': d_w,
-                                        'with_day_of_month': d_m, 'stepwise': s, 'm': m1})
+        for sl in seasonal: 
+            for mm in m:
+                for sw in stepwise:
+                    for bc in use_boxcox:
+                        for df in use_date_featurizer:
+                            if not df:
+                                # "with_day_" parameters do not make sense.
+                                with_day_of_week, with_day_of_month = [False], [False]
+                            for df_w in with_day_of_week:
+                                for df_m in with_day_of_month:
+                                    for ff in use_fourier_featurizer:
+                                        if not ff:
+                                            # Fourier's 'm' and 'k' do not make sense.  
+                                            fourier_featurizer_m, fourier_featurizer_k = [None], [None] 
+                                        for ff_m in fourier_featurizer_m:
+                                            for ff_k in fourier_featurizer_k:
+                                                self.params_list.append({
+                                                    'seasonal': sl, 'm': mm, 'stepwise': sw,
+                                                    'use_boxcox': bc, 'use_date_featurizer': df, 'with_day_of_week': df_w,
+                                                    'with_day_of_month': df_m, 'use_fourier_featurizer': ff,
+                                                    'fourier_featurizer_m': ff_m, 'fourier_featurizer_k': ff_k})
 
 
     def dataset_adjustment(self):
         super().dataset_adjustment()
         
         # Arima requires X_train with timedate stamp for the Date Featurizer
-        if self.modeling.dataset.interval_f is None:
+        if self.modeling.dataset.date_col is None:
             self.X_train, self.X_test = None, None
         else:
-            # X_ part available only when column interval_f is specified 
-            self.X_train = self.modeling.train[[self.modeling.dataset.interval_f]]
-            self.X_test = self.modeling.test[[self.modeling.dataset.interval_f]]    
+            # X_ part available only when column date_col is specified 
+            self.X_train = self.modeling.train[[self.modeling.dataset.date_col]]
+            self.X_test = self.modeling.test[[self.modeling.dataset.date_col]]    
 
 
     def get_model(self, params, mode):
 
+        seasonal = params['seasonal']
+        m = params['m']
+        stepwise = params['stepwise']
         use_boxcox = params['use_boxcox']
         use_date_featurizer = params['use_date_featurizer']
         with_day_of_week = params['with_day_of_week']
         with_day_of_month = params['with_day_of_month']
-        stepwise = params['stepwise']
-        m = params['m']
+        use_fourier_featurizer = params['use_fourier_featurizer']
+        fourier_featurizer_m = params['fourier_featurizer_m']
+        fourier_featurizer_k = params['fourier_featurizer_k']
 
         if mode == 'full':
             y = np.concatenate([self.y_train, self.y_test])
@@ -275,18 +275,26 @@ class ArimaSelector(BaseSelector):
         
         if use_date_featurizer:
             date_featurizer = preprocessing.DateFeaturizer(
-                column_name=self.modeling.dataset.interval_f,  # the name of the date feature in the X matrix
+                column_name=self.modeling.dataset.date_col,  # the name of the date feature in the X matrix
                 with_day_of_week=with_day_of_week,
                 with_day_of_month=with_day_of_month)
             steps.append(('step_df', date_featurizer))
-        
+
+        if use_fourier_featurizer:
+            fourier_featurizer = preprocessing.FourierFeaturizer(
+                m=fourier_featurizer_m,
+                k=fourier_featurizer_k)
+            steps.append(('step_ff', fourier_featurizer))
+
         n_diffs = arima.ndiffs(y, max_d=5)
 
         steps.append(('step_arima', arima.AutoARIMA(d=n_diffs, trace=3,
             stepwise=stepwise,
             suppress_warnings=True,
-            seasonal=True,
-            m=m)))
+            seasonal=seasonal,
+            m=m,
+            # D=0,
+            )))
 
         model = pipeline.Pipeline(steps)
 
@@ -318,17 +326,15 @@ class ArimaSelector(BaseSelector):
 
 class HoltWintersSelector(BaseSelector):
 
-    def __init__(self, modeling, model_type, model_params, model_name):
+    def __init__(self, modeling, init_params):
         super().__init__()
         self.modeling = modeling
-        self.model_type = model_type
-        self.model_name = model_name
-        self.verify_params(model_params)
+        self.verify_params(init_params)
         self.dataset_adjustment()
 
 
     def verify_params(self, params):
-        self.logger.debug(f"Verify parameters for {self.model_name}.")
+        self.logger.debug(f"Verify parameters.")
 
         # Default parameters.
         trend = ['add', 'mul', None]       # Type of trend component.
@@ -372,33 +378,36 @@ class HoltWintersSelector(BaseSelector):
             if self.modeling.dataset.discrete_interval == 'day':
                 seasonal_periods = [7]
 
+            elif self.modeling.dataset.discrete_interval == 'week':
+                seasonal_periods = [52]
+
             elif self.modeling.dataset.discrete_interval == 'month':
                 seasonal_periods = [12]
 
             else:
-                seasonal_periods = [7, 12, 4, 13]
+                seasonal_periods = [7, 12, 4, 13, 52, 51, 53]
 
         # All models for brute force
         for t in trend:
             for d in damped_trend:
                 for s in seasonal:
                     for p in seasonal_periods:
-                        for b in use_boxcox:
+                        for bc in use_boxcox:
                             for r in remove_bias:
                                 self.params_list.append(
                                     {'trend': t, 'damped_trend': d, 'seasonal': s, 'seasonal_periods': p,
-                                     'use_boxcox': b, 'remove_bias': r})
+                                     'use_boxcox': bc, 'remove_bias': r})
 
 
     def dataset_adjustment(self):
         super().dataset_adjustment()
 
-        # if self.modeling.dataset.interval_f is None:
+        # if self.modeling.dataset.date_col is None:
         #     self.X_train, self.X_test = None, None
         # else:
-        #     # X_ part available only when column interval_f is specified 
-        #     self.X_train = self.train[[self.modeling.dataset.interval_f]]
-        #     self.X_test = self.test[[self.modeling.dataset.interval_f]]
+        #     # X_ part available only when column date_col is specified 
+        #     self.X_train = self.train[[self.modeling.dataset.date_col]]
+        #     self.X_test = self.test[[self.modeling.dataset.date_col]]
 
 
     def get_model(self, params, mode):
@@ -446,17 +455,15 @@ class HoltWintersSelector(BaseSelector):
 
 class ProphetSelector(BaseSelector):
 
-    def __init__(self, modeling, model_type, model_params, model_name):
+    def __init__(self, modeling, init_params):
         super().__init__()
         self.modeling = modeling
-        self.model_type = model_type
-        self.model_name = model_name
-        self.verify_params(model_params)
+        self.verify_params(init_params)
         self.dataset_adjustment()
 
 
     def verify_params(self, params):
-        self.logger.debug(f"Verify parameters for {self.model_name}.")
+        self.logger.debug(f"Verify parameters.")
 
         # Default parameters.
         growth = ['linear']
@@ -527,14 +534,14 @@ class ProphetSelector(BaseSelector):
     def dataset_adjustment(self):
         super().dataset_adjustment()
         
-        if self.modeling.dataset.interval_f is None:
+        if self.modeling.dataset.date_col is None:
             self.logger.error(f"Prophet requires an interval field that can be cast to DateTime.")
             raise Exception
             
         # Prophet requires dataframe with ds and y columns
-        self.ds_y_train = self.modeling.train[[self.modeling.dataset.interval_f, self.modeling.dataset.target_f]]
+        self.ds_y_train = self.modeling.train[[self.modeling.dataset.date_col, self.modeling.dataset.target_col]]
         self.ds_y_train.columns = ['ds', 'y']
-        self.ds_y_test = self.modeling.test[[self.modeling.dataset.interval_f, self.modeling.dataset.target_f]]
+        self.ds_y_test = self.modeling.test[[self.modeling.dataset.date_col, self.modeling.dataset.target_col]]
         self.ds_y_test.columns = ['ds', 'y']
 
 

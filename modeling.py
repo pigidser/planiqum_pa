@@ -11,7 +11,9 @@ from matplotlib import pyplot as plt
 
 
 from dataset import Dataset
-from models import ModelSelector
+from models import ArimaSelector, HoltWintersSelector, ProphetSelector
+
+selector_list = {'arima': ArimaSelector, 'holtwinters': HoltWintersSelector, 'prophet': ProphetSelector}
 
 
 class Modeling(object):
@@ -19,15 +21,16 @@ class Modeling(object):
     Build and estimate models.
 
     """
-    def __init__(self, dataset, folder, n_intervals_estimation, dimension_values=None):
+    def __init__(self, dataset, folder, n_intervals_estimation):
         super().__init__()
         self.logger = logging.getLogger('planiqum_predictive_analitics.' + __name__)
         self.dataset = dataset
+        self.define_dimension_values()
         self.load_model_base(folder)
         self.n_intervals_estimation = n_intervals_estimation
-        self.define_dimension_values(dimension_values)
-        self.model_list = []
-        self.metric_list = []
+        self.selectors = list()
+        self.models = list()
+        self.metric = 'rmse'
         
 
     def load_model_base(self, folder):
@@ -53,16 +56,16 @@ class Modeling(object):
         pass
 
 
-    def define_dimension_values(self, dimension_values):
+    def define_dimension_values(self, dimension_values=None):
         self.logger.debug(f"Define dimension values.")
 
-        if self.dataset.dimension_f is None:
-            self.logger.debug(f"Column dimension_f is not specified, so dataset consists of the one dimension value.")
+        if self.dataset.dimension_col is None:
+            self.logger.debug(f"Column dimension_col is not specified, so dataset consists of the one dimension value.")
             self.dimension_values = None
 
         else:
-            self.logger.debug(f"Column dimension_f is specified. Create a list of dimension values for modeling.")
-            all_dimension_values = self.dataset.data[self.dataset.dimension_f].unique()
+            self.logger.debug(f"Column dimension_col is specified. Create a list of dimension values for modeling.")
+            all_dimension_values = self.dataset.data[self.dataset.dimension_col].unique()
             
             if dimension_values is None:
                 self.dimension_values = all_dimension_values
@@ -77,62 +80,63 @@ class Modeling(object):
                     self.logger.debug(f"Parameter dimension_values consists of unknown values. All {len(self.dimension_values)} existing values will be taken for modeling.")
 
 
-    def define_metrics(self, metrics):
+    def set_metric(self, metric):
         """
-        Define a list of metrics that will be used for estimation.
+        Define a metric for estimation of the model.
         Parameters
         ----------
-            metrics : string or list of strings
-                Metrics.
+            metric : string
         """
 
-        if isinstance(metrics, str):
-            metrics = [metrics]
-
-        if isinstance(metrics, list):
-            for metric in metrics:
-                if metric in ['rmse', 'smape']:
-                    self.metric_list.append(metric)
-                else:
-                    self.logger.warning(f"Unknown or unsupported metric '{metric}'")
+        if isinstance(metric, str):
+            if metric in ['rmse', 'smape']:
+                self.metric = metric
+            else:
+                self.logger.warning(f"Unknown or unsupported metric '{metric}'")
+        else:
+            self.logger.warning(f"Define a metric as string name")
 
 
-    def add_model(self, model_type, model_params, model_name='best_model'):
+    def add_selector(self, selector_type, selector_init_params, selector_name='Noname', recalculate=True):
 
-        if model_type not in ['arima', 'holtwinters', 'prophet']:
-            self.logger.warning("Model type {model_type} is not supported.")
+        if selector_type not in selector_list.keys():
+            self.logger.warning("Selector type {model_type} is not supported.")
+            return False
+        else:
+            selector = selector_list[selector_type]
+
+        if not isinstance(selector_init_params, dict):
+            self.logger.warning("Selector initial params must be dictionary.")
             return False
 
-        if not isinstance(model_params, dict):
-            self.logger.warning("Model params must be dictionary.")
-            return False
+        self.selectors.append({
+            'selector': selector,
+            'selector_type': selector_type,
+            'selector_init_params': selector_init_params,
+            'selector_name': selector_name,
+            'recalculate': recalculate,
+            })
 
-        self.model_list.append((model_type, model_params, model_name))
-        self.logger.debug(f"The model '{model_name} is added with params {model_params}.")
+        self.logger.debug(f"Selector '{selector_type}' is added with params {selector_init_params} and name '{selector_name}'.")
         
         return True
 
-    def run_modeling(self, recalculate=True):
+    def start_modeling(self):
 
-        if len(self.model_list) == 0:
-            self.logger.warning(f"Model list is empty. Use add_model method to create a list of models.")
+        if len(self.selectors) == 0:
+            self.logger.warning(f"No one selector defined. Use add_selector method to choose one or several selectors.")
             return
 
-        if len(self.metric_list) == 0:
-            self.logger.warning(f"Metric list is empty. Use define_metric method to add one or several metric.")
-            return
-
-        self.logger.debug(f"Run modeling.")
-
-        self.recalculate = recalculate
+        self.logger.debug(f"Start modeling.")
 
         if self.dimension_values is None:
             self.get_time_series()
-            self.create_models()
+            self.create_all_models()
         else:
             for value in self.dimension_values:
                 self.get_time_series(value)
-                self.create_models()
+                # Create models for defined dimension values
+                self.create_all_models()
 
 
     def get_time_series(self, dimension_value=None):
@@ -140,61 +144,103 @@ class Modeling(object):
 
         if dimension_value is None:
             # Get all dataset as consisting the only dimension value.
-            self.cur_dim_val = None
-            self.cur_ts = self.dataset.data
+            self.dimension_value = None
+            self.ts = self.dataset.data
         else:
             # Get a part of dataset for the asked dimension_value.
-            self.cur_dim_val = dimension_value
-            self.cur_ts =  self.dataset.data[self.dataset.data[self.dataset.dimension_f]==self.cur_dim_val]
+            self.dimension_value = dimension_value
+            self.ts = self.dataset.data[self.dataset.data[self.dataset.dimension_col]==self.dimension_value]
         
 
-    def create_models(self):
+    def create_all_models(self):
+        """
+        Create models for self.dimension_value with all selectors.
+
+        """
+        # Splitting for particular ts
         self.train_test_split()
-        for model in self.model_list:
-            self.select_model(model)
+        # With each selector create models  
+        for selector in self.selectors:
+            self.selector = selector['selector']
+            self.selector_type = selector['selector_type']
+            self.selector_init_params = selector['selector_init_params']
+            self.selector_name = selector['selector_name']
+            self.selector_recalculate = selector['recalculate']
+            self.create_model()
 
 
     def train_test_split(self):
         
-        self.train = self.cur_ts.iloc[:len(self.cur_ts) - self.n_intervals_estimation]
-        self.test = self.cur_ts.iloc[-self.n_intervals_estimation:]
+        self.train = self.ts.iloc[:len(self.ts) - self.n_intervals_estimation]
+        self.test = self.ts.iloc[-self.n_intervals_estimation:]
         
         self.logger.debug(f"Train test split. Train part len={len(self.train)}, test part len={len(self.test)}.")
 
 
-    def select_model(self, model):
+    def get_model_id(self):
+        return f"{self.dimension_value}_{self.selector_type}_{self.selector_name}"
 
-        model_type = model[0]
-        model_parameters = model[1]
-        model_name = model[2]
-        model_file_name = os.path.join(self.model_base_folder, f"{self.cur_dim_val}_{model_type}_{model_name}.pkl")
-        plot_file_name = os.path.join(self.model_base_folder, f"{self.cur_dim_val}_{model_type}_{model_name}.png")
 
-        # if self.select_model(self.cur_dim_val, model_name) and not self.recalculate:
-        if os.path.isfile(model_file_name) and not self.recalculate:
-            self.logger.debug(f"The model {model_name} exists for dimension value {self.cur_dim_val} and recalculation is not requested.")
+    def model_exists(self):
+        return os.path.isfile(self.get_model_id() + '.pkl')
+
+
+    def create_model(self):
+        """
+        Create a model for current dimension value with current selector.
+
+        """
+        if self.model_exists and not self.selector_recalculate:
+            self.logger.debug(f"The model {self.get_model_id()} exists for dimension value {self.dimension_value} and recalculation is not requested.")
             return
 
-        # Find the best model and fit
-        selector = ModelSelector(self, model_type, model_parameters, model_name)
-
-        if selector.model_selected:
-            self.logger.debug(f"SMAPE = {selector.model.smape_score(selector.model.y_test, selector.model.best_y_pred)}")
-            self.logger.debug(f"RMSE = {selector.model.rmse_score(selector.model.y_test, selector.model.best_y_pred)}")
-
-            self.save_plot(selector.model.y_train, selector.model.y_test, selector.model.best_y_pred, plot_file_name)
-            self.save_model(selector.model.best_model, model_file_name)
+        # An appropriate selector returns a model-wrapper
+        self.logger.debug(f"Find the best model for dimension value '{self.dimension_value}' with selector {self.selector_type}")
+        model = self.selector(self, self.selector_init_params)
+        
+        if model.get_best_model():
+            model.fit()
+            self.save_model(model)
 
         else:
             self.logger.warning(f"Cannot select a model with parameters above.")
 
 
-    def save_model(self, model, model_file_name):
+    def save_model(self, model):
+
+        model_id = self.get_model_id()
+        model_file_name = os.path.join(self.model_base_folder, f"{model_id}.pkl")
+        plot_file_name = os.path.join(self.model_base_folder, f"{model_id}.png")
+
+        self.logger.debug(f"Saving result for {model_id} ...")
+
+        smape = model.smape_score(model.y_test, model.best_y_pred)
+        rmse = model.rmse_score(model.y_test, model.best_y_pred)
+
+        self.logger.debug(f"SMAPE = {smape}, RMSE = {rmse}")
+
+        self.to_png(model.y_train, model.y_test, model.best_y_pred, plot_file_name)
+        self.to_pkl(model.best_model, model_file_name)
+
+        result = {
+            'id': model_id,
+            'dimension_value': self.dimension_value,
+            'model_type': self.selector_type,
+            'model_name': model_id,
+            'params': model.best_params,
+            'y_pred': model.best_y_pred,
+            'rmse': rmse,
+            'smape': smape,
+            }
+        self.models.append(result)
+
+
+    def to_pkl(self, model, model_file_name):
         # Save the model
         joblib.dump(model, model_file_name, compress=3)
     
 
-    def save_plot(self, y_train, actuals, forecast, plot_file_name):
+    def to_png(self, y_train, actuals, forecast, plot_file_name):
         fig = plt.figure(figsize=(16, 8))
         ax = fig.add_subplot(1, 1, 1)
 
@@ -206,11 +252,7 @@ class Modeling(object):
                 label='Predicted')
         ax.plot(x[n_train:], actuals, color='red', label='Actual')
         ax.legend(loc='lower left', borderaxespad=0.5)
-        ax.set_title(f"Actuals vs Forecast for dimension value {self.cur_dim_val}")
+        ax.set_title(f"Actuals vs Forecast for dimension value {self.dimension_value}")
         ax.set_ylabel('Sold units')
         plt.savefig(plot_file_name)
-
-
-
-
-
+        
