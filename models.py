@@ -6,8 +6,10 @@ import traceback
 import os, sys
 from time import time
 import numpy as np
+from numpy.core.getlimits import _register_type
 from numpy.core.numeric import Inf
 import pandas as pd
+from scipy.stats import boxcox
 
 # arima predictor
 from pmdarima import arima
@@ -26,8 +28,13 @@ from utilities import *
 # from dataset import Dataset
 
 
+LAMBDA_THRESHOLD_BOXCOX = 0.4
+
+
 
 class BaseSelector(object):
+
+    lambda_threshold_boxcox = 0.3
 
     def __init__(self):
         self.logger = logging.getLogger('planiqum_predictive_analitics.' + __name__)
@@ -126,14 +133,39 @@ class BaseSelector(object):
         self.logger.warning(f"Parameter {param_name} value is incorrect.")
 
 
+    def get_boxcox_lambda(self, y):
+        """
+        scyipy.stat.boxcox() returns lambda in the second output parameter. 
+        """
+        _, lam = boxcox(y)
+        self.logger.debug(f"BoxCox lambda={lam}.")
+        return lam
+
+
+    def is_boxcox_needed(self, lam):
+        """
+        Check if boxcox transformation is needed. Lambda parameter comes from
+        scyipy.stat.boxcox() that returns it in the second output parameter.
+        If lambda equal to one, data distribution is normal and transformation
+        is not needed.
+        See https://towardsdatascience.com/box-cox-transformation-explained-51d745e34203, 
+        """
+        
+        if abs(lam - 1) < LAMBDA_THRESHOLD_BOXCOX:
+            self.logger.debug(f"BoxCox transformation is not needed as lambda is close to 1.")
+            return False
+        else:
+            self.logger.debug(f"BoxCox transformation is needed.")
+            return True
+
 
 class ArimaSelector(BaseSelector):
 
     def __init__(self, modeling, init_params):
         super().__init__()
         self.modeling = modeling
-        self.verify_params(init_params)
         self.dataset_adjustment()
+        self.verify_params(init_params)
 
 
     def verify_params(self, params):
@@ -143,7 +175,7 @@ class ArimaSelector(BaseSelector):
         seasonal = [True]
         m = [1]
         stepwise = [True]
-        use_boxcox = [True, False]
+        use_boxcox = ['auto']
         use_date_featurizer = [False]
         with_day_of_week = [True, False]
         with_day_of_month = [True, False]
@@ -163,7 +195,10 @@ class ArimaSelector(BaseSelector):
                 stepwise = [bool(params[param])]
 
             elif param == 'use_boxcox':
-                use_boxcox = [bool(params[param])]
+                if params[param] == 'auto':
+                    use_boxcox = [params[param]]
+                else:
+                    use_boxcox = [bool(params[param])]
             
             elif param == 'use_date_featurizer':
                 use_date_featurizer = [bool(params[param])]
@@ -206,6 +241,13 @@ class ArimaSelector(BaseSelector):
         if True in use_fourier_featurizer and (None in fourier_featurizer_k):
             fourier_featurizer_k = [4]
             self.logger.warning(f"Wrong initial parameters. Parameter k for Fourier Featurizer is setup with default value '{fourier_featurizer_k[0]}'!")
+
+        # Get the Box-Cox lambda parameter that can transform the data in the best way
+        if ('auto' in use_boxcox) or (True in use_boxcox):
+            self.boxcox_lambda = self.get_boxcox_lambda(self.y_train)
+        if 'auto' in use_boxcox:
+            # Decide if transformation is needed
+            use_boxcox = [self.is_boxcox_needed(self.boxcox_lambda)]
 
         # All combination of parameters for brute force
         for sl in seasonal: 
@@ -270,7 +312,7 @@ class ArimaSelector(BaseSelector):
         steps = list()
 
         if use_boxcox:
-            bc_transformer = preprocessing.BoxCoxEndogTransformer(lmbda2=1e-6)
+            bc_transformer = preprocessing.BoxCoxEndogTransformer(lmbda=self.boxcox_lambda)
             steps.append(('step_bc', bc_transformer))
         
         if use_date_featurizer:
@@ -329,8 +371,8 @@ class HoltWintersSelector(BaseSelector):
     def __init__(self, modeling, init_params):
         super().__init__()
         self.modeling = modeling
-        self.verify_params(init_params)
         self.dataset_adjustment()
+        self.verify_params(init_params)
 
 
     def verify_params(self, params):
@@ -341,7 +383,7 @@ class HoltWintersSelector(BaseSelector):
         damped_trend = [True, False]       # Should the trend component be damped.
         seasonal = ['add', 'mul', None]    # Type of seasonal component.
         seasonal_periods = None            # The number of periods in a complete seasonal cycle
-        use_boxcox = [True, False]         # Should the Box-Cox transform be applied to the data first?
+        use_boxcox = ['auto']              # Should the Box-Cox transform be applied to the data first?
         remove_bias = [True, False]        # Remove bias from forecast values
 
         for param in params:
@@ -365,7 +407,10 @@ class HoltWintersSelector(BaseSelector):
                 seasonal_periods = [int(params[param])]
             
             elif param == 'use_boxcox':
-                use_boxcox = [bool(params[param])]
+                if params[param] == 'auto':
+                    use_boxcox = [params[param]]
+                else:
+                    use_boxcox = [bool(params[param])]
 
             elif param == 'remove_bias':
                 remove_bias = [bool(params[param])]
@@ -386,6 +431,13 @@ class HoltWintersSelector(BaseSelector):
 
             else:
                 seasonal_periods = [7, 12, 4, 13, 52, 51, 53]
+
+        # Get the Box-Cox lambda parameter that can transform the data in the best way
+        if ('auto' in use_boxcox) or (True in use_boxcox):
+            self.boxcox_lambda = self.get_boxcox_lambda(self.y_train)
+        if 'auto' in use_boxcox:
+            # Decide if transformation is needed
+            use_boxcox = [self.is_boxcox_needed(self.boxcox_lambda)]
 
         # All models for brute force
         for t in trend:
@@ -427,6 +479,10 @@ class HoltWintersSelector(BaseSelector):
             self.logger.error(f"The 'mode' parameter should be 'full' or 'train'!")
             raise Exception
 
+        if use_boxcox:
+            # The calculated lambda should be passed to ExponentialSmoothing as float
+            use_boxcox = self.boxcox_lambda
+
         if trend is None:
             model = ExponentialSmoothing(y, trend=trend,
                 seasonal=seasonal, seasonal_periods=seasonal_periods, use_boxcox=use_boxcox,
@@ -458,8 +514,8 @@ class ProphetSelector(BaseSelector):
     def __init__(self, modeling, init_params):
         super().__init__()
         self.modeling = modeling
-        self.verify_params(init_params)
         self.dataset_adjustment()
+        self.verify_params(init_params)
 
 
     def verify_params(self, params):
