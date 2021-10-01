@@ -180,9 +180,6 @@ class Modeling(object):
             result[self.selector_type]['model_type'] = self.selector_type
             result[self.selector_type]['model_name'] = model_id
 
-            if model == 'model_exists':
-                result[self.selector_type]['result'] = 'model_exists'
-
             if not model is None:
                 result[self.selector_type]['params'] = model.best_params
                 result[self.selector_type]['y_pred'] = model.best_y_pred
@@ -192,7 +189,7 @@ class Modeling(object):
                 # Retain data to define the best model for the current demension value.
                 model_list.append((self.selector_type, model_id, model, model.metric_value))
 
-            elif model:
+            else:
                 # The selector is unable to find a model with selected parameters.
                 result[self.selector_type]['result'] = 'fail'
 
@@ -241,8 +238,8 @@ class Modeling(object):
         return f"{self.dimension_value}_{self.selector_type}_{self.selector_name}"
 
 
-    def model_exists(self):
-        return os.path.isfile(self.get_model_id() + '.pkl')
+    def model_exists(self, model_id):
+        return os.path.isfile(model_id + '.pkl')
 
 
     def fit_current_selector(self):
