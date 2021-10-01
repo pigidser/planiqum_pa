@@ -55,92 +55,93 @@ def main():
         if operation.lower() == 'estimation':
             logger.debug(f"Initialization of time series data from {data_file}")
             
-            # ## Test 1 - daily interval
+            ## Test 1 - daily interval
 
-            # # Load a dataset and define fields purpose.
-            # data = Dataset(
-            #     filename='./data/orders.csv',
-            #     target_col='Quantity',
-            #     discrete_interval='day',
-            #     date_col='Date',
-            #     dimension_col='ProductId')
+            # Load a dataset and define fields purpose.
+            data = Dataset(
+                filename='./data/orders.csv',
+                target_col='Quantity',
+                discrete_interval='day',
+                date_col='Date',
+                dimension_col='ProductId')
 
-            # # Create modeling object and define number of intervals for estimation.
-            # modeling = Modeling(data, "model_base", n_intervals_estimation=28)
+            # Create modeling object and define number of intervals for estimation.
+            modeling = Modeling(data, "model_base", n_intervals_estimation=28, save_mode='best')
 
-            # # Our dataset includes many products. Let's choose several for test.
-            # modeling.define_dimension_values([370, 2354, 2819])
+            # Our dataset includes many products. Let's choose several for test.
+            modeling.define_dimension_values([370, 2354])
             
-            # # Add ARIMA
+            # Add ARIMA
+            modeling.add_selector(
+                selector_type='arima',
+                selector_init_params={'use_boxcox' : False, 'use_date_featurizer': True, 'with_day_of_week' : True, 'with_day_of_month' : False, 'stepwise': True,},
+                selector_name='daily_bc_false')
+
+            # Add Holt-Winter's
+            modeling.add_selector(
+                selector_type='holtwinters',
+                selector_init_params={'trend': 'mul', 'damped_trend': False, 'seasonal': 'add', 'seasonal_periods': 7, 'use_boxcox': 'auto', 'remove_bias': True,},
+                selector_name='test1')
+
+            # Add Prophet
+            modeling.add_selector(
+                selector_type='prophet',
+                selector_init_params={'freq': 'D', 'growth': 'linear', 'yearly_seasonality': False, 'weekly_seasonality': True, 'daily_seasonality': False, 'seasonality_mode': 'additive',},
+                selector_name='test1')
+
+            # Select a metric
+            modeling.set_metric('rmse')
+
+            # Run creation of the best models
+            modeling.run()
+
+            print(modeling.results)
+
+            
+
+
+            # ## Test 2 - weekly interval
+
+            # data = Dataset(
+            #     filename='./data/Sales_Product_Price_Store1.csv',
+            #     target_col='Weekly_Units_Sold',
+            #     discrete_interval='week',
+            #     date_col='Date',
+            #     dimension_col='Product')
+
+            # modeling = Modeling(data, "model_base", n_intervals_estimation=24)
+            # modeling.define_dimension_values([1])
+
             # modeling.add_selector(
             #     selector_type='arima',
-            #     selector_init_params={'use_boxcox' : True, 'use_date_featurizer': True, 'with_day_of_week' : True, 'with_day_of_month' : False, 'stepwise': True,},
-            #     selector_name='test1')
+            #     selector_init_params={'seasonal': False, 'use_boxcox': False, 'use_fourier_featurizer': True, 'fourier_featurizer_m': 52, 'fourier_featurizer_k': 5},
+            #     selector_name='with_fourier')
 
-            # # Add Holt-Winter's
             # modeling.add_selector(
-            #     selector_type='holtwinters',
-            #     selector_init_params={'trend': 'mul', 'damped_trend': False, 'seasonal': 'add', 'seasonal_periods': 7, 'use_boxcox': False, 'remove_bias': True,},
-            #     selector_name='test1')
+            #     selector_type='arima',
+            #     selector_init_params={'seasonal': True, 'm': 52, 'use_boxcox': 'auto'},
+            #     selector_name='native_seasonal_auto')
 
-            # # Add Prophet
             # modeling.add_selector(
-            #     selector_type='prophet',
-            #     selector_init_params={'freq': 'D', 'growth': 'linear', 'yearly_seasonality': False, 'weekly_seasonality': True, 'daily_seasonality': False, 'seasonality_mode': 'additive',},
-            #     selector_name='test1')
-
-            # # Select a metric
-            # modeling.set_metric('rmse')
-
-            # # Run creation of the best models
-            # modeling.start_modeling()
-
-            # # print(modeling.models)
-
-            
-
-
-            ### Test 2 - weekly interval
-
-            data = Dataset(
-                filename='./data/Sales_Product_Price_Store1.csv',
-                target_col='Weekly_Units_Sold',
-                discrete_interval='week',
-                date_col='Date',
-                dimension_col='Product')
-
-            modeling = Modeling(data, "model_base", n_intervals_estimation=50)
-            modeling.define_dimension_values([1])
-
-            modeling.add_selector(
-                selector_type='arima',
-                selector_init_params={'seasonal': False, 'use_boxcox': False, 'use_fourier_featurizer': True, 'fourier_featurizer_m': 52, 'fourier_featurizer_k': 4},
-                selector_name='with_fourier')
-
-            modeling.add_selector(
-                selector_type='arima',
-                selector_init_params={'seasonal': True, 'm': 52, 'use_boxcox': False},
-                selector_name='native_seasonal')
-
-            modeling.add_selector(
-                selector_type='arima',
-                selector_init_params={'seasonal': True, 'm': 52, 'use_boxcox': True},
-                selector_name='native_seasonal_boxcox')
+            #     selector_type='arima',
+            #     selector_init_params={'seasonal': True, 'm': 52, 'use_boxcox': True},
+            #     selector_name='native_seasonal_boxcox')
 
             # modeling.add_selector(
             #     selector_type='holtwinters',
             #     # selector_init_params={'trend': 'add', 'damped_trend': False, 'seasonal': 'mul', 'use_boxcox': True, 'remove_bias': False},
-            #     selector_init_params={'seasonal_periods': 53, 'use_boxcox': True},
-            #     selector_name='test2')
+            #     selector_init_params={'seasonal_periods': 52, 'use_boxcox': 'auto'},
+            #     selector_name='hw_bc_true')
             # modeling.add_selector(
             #     selector_type='prophet',
             #     selector_init_params={'growth': 'linear', 'yearly_seasonality': True, 'weekly_seasonality': False, 'daily_seasonality': False, 'seasonality_mode': 'additive', 'freq': 'W'},
-            #     selector_name='test2')
+            #     selector_name='year_seson')
             
-            modeling.set_metric('smape')
-            modeling.start_modeling()
+            # modeling.set_metric('smape')
+            # modeling.run()
+            # print(modeling.models)
 
-            print(modeling.models)
+            # print(modeling.models)
 
             # ### Test 3 - monthly interval
 
@@ -166,7 +167,36 @@ def main():
             #     selector_name='test2')
             
             # modeling.set_metric('smape')
-            # modeling.start_modeling()
+            # modeling.run()
+
+
+            ### Test 4 - monthly interval
+
+            # data = Dataset(
+            #     filename='./data/sales_sku_sum.csv',
+            #     target_col='qty',
+            #     discrete_interval='month',
+            #     date_col='date',
+            #     dimension_col=None)
+
+            # modeling = Modeling(data, "model_base", n_intervals_estimation=18)
+            # # modeling.define_dimension_values(['00-00000476','00-00000477','00-00000479','00-00000490','00-00000491'])
+            # # modeling.define_dimension_values(['00-00000476'])
+            # modeling.add_selector(
+            #     selector_type='arima',
+            #     selector_init_params={'seasonal': False, 'm': 12, 'use_boxcox': 'auto'},
+            #     selector_name='test4_bc_auto')
+            # # modeling.add_selector(
+            # #     selector_type='holtwinters',
+            # #     selector_init_params={'seasonal_periods': 12},
+            # #     selector_name='test4')
+            # # modeling.add_selector(
+            # #     selector_type='prophet',
+            # #     selector_init_params={'freq': 'M', 'yearly_seasonality': True, 'weekly_seasonality': False, 'seasonality_mode': 'additive'},
+            # #     selector_name='test4')
+            
+            # modeling.set_metric('smape')
+            # modeling.run()
 
         else:
             logger.error(f"Operation type '{operation}' is not supported.")

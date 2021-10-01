@@ -1,4 +1,6 @@
 from typing import Dict
+
+from numpy.lib.npyio import save
 from utilities import *
 import logging
 import traceback
@@ -21,15 +23,18 @@ class Modeling(object):
     Build and estimate models.
 
     """
-    def __init__(self, dataset, folder, n_intervals_estimation):
+    def __init__(self, dataset, folder, n_intervals_estimation, save_mode='all'):
         super().__init__()
         self.logger = logging.getLogger('planiqum_predictive_analitics.' + __name__)
         self.dataset = dataset
         self.define_dimension_values()
         self.load_model_base(folder)
         self.n_intervals_estimation = n_intervals_estimation
+        if save_mode not in ['all', 'best']:
+            save_mode = 'best'
+        self.save_mode = save_mode
         self.selectors = list()
-        self.models = list()
+        self.results = dict()
         self.metric = 'rmse'
         
 
@@ -121,29 +126,32 @@ class Modeling(object):
         
         return True
 
-    def start_modeling(self):
+    def run(self):
 
         if len(self.selectors) == 0:
-            self.logger.warning(f"No one selector defined. Use add_selector method to choose one or several selectors.")
+            self.logger.warning(f"No one selector defined. Use add_selector method to choose selector.")
             return
 
-        self.logger.debug(f"Start modeling.")
+        self.logger.debug(f"Modeling started.")
 
         if self.dimension_values is None:
-            self.get_time_series()
-            self.create_all_models()
+            self.set_dimension(None)
+            self.fit_selectors()
         else:
             for value in self.dimension_values:
-                self.get_time_series(value)
-                # Create models for defined dimension values
-                self.create_all_models()
+                self.set_dimension(value)
+                # Apply selectors to find models for current dimension value
+                self.fit_selectors()
+
+        self.logger.debug(f"Modeling completed.")
 
 
-    def get_time_series(self, dimension_value=None):
+    def set_dimension(self, dimension_value=None):
         self.logger.debug(f"Get time series for {'entire dataset' if dimension_value is None else dimension_value}.")
 
         if dimension_value is None:
-            # Get all dataset as consisting the only dimension value.
+            # The dimension column is not specified. In that case, it is considered
+            # that the dataset contains the only dimension value.
             self.dimension_value = None
             self.ts = self.dataset.data
         else:
@@ -152,21 +160,74 @@ class Modeling(object):
             self.ts = self.dataset.data[self.dataset.data[self.dataset.dimension_col]==self.dimension_value]
         
 
-    def create_all_models(self):
+    def fit_selectors(self):
         """
         Create models for self.dimension_value with all selectors.
 
         """
         # Splitting for particular ts
         self.train_test_split()
-        # With each selector create models  
+
+        result = dict()
+        model_list = list()
+        # Find models with each selector.
         for selector in self.selectors:
-            self.selector = selector['selector']
-            self.selector_type = selector['selector_type']
-            self.selector_init_params = selector['selector_init_params']
-            self.selector_name = selector['selector_name']
-            self.selector_recalculate = selector['recalculate']
-            self.create_model()
+            self.set_selector(selector)
+            model_id = self.get_model_id()
+            model = self.fit_current_selector()
+            # Model result.
+            result[self.selector_type] = dict()
+            result[self.selector_type]['model_id'] = model_id
+            result[self.selector_type]['model_type'] = self.selector_type
+            result[self.selector_type]['model_name'] = model_id
+
+            if model == 'model_exists':
+                result[self.selector_type]['result'] = 'model_exists'
+
+            if not model is None:
+                result[self.selector_type]['params'] = model.best_params
+                result[self.selector_type]['y_pred'] = model.best_y_pred
+                result[self.selector_type]['metric_name'] = self.metric
+                result[self.selector_type]['metric_value'] = model.metric_value
+                result[self.selector_type]['result'] = 'ok'
+                # Retain data to define the best model for the current demension value.
+                model_list.append((self.selector_type, model_id, model, model.metric_value))
+
+            elif model:
+                # The selector is unable to find a model with selected parameters.
+                result[self.selector_type]['result'] = 'fail'
+
+        # Return the best model.
+        if len(model_list) > 0:
+            sel, id, mod, val = zip(*model_list)
+            m = np.argmax(val)
+            best_selector_type = sel[m]
+            best_model = mod[m]
+            best_model_id = id[m]
+            result[best_selector_type]['best_metric'] = 1
+
+            # Add result
+            self.results[self.dimension_value] = result
+
+            # Save all or the best model only
+            if self.save_mode == 'best':
+                self.save_model(best_model_id, best_model)
+            else:
+                for sel, id, mod, val in model_list:
+                    self.save_model(id, mod)
+
+            self.logger.debug(f"Found the best model for dimension value '{self.dimension_value}'.")
+
+        else:
+            self.logger.error(f"Failed to find any model for dimension value '{self.dimension_value}'.")
+        
+
+    def set_selector(self, selector):
+        self.selector = selector['selector']
+        self.selector_type = selector['selector_type']
+        self.selector_init_params = selector['selector_init_params']
+        self.selector_name = selector['selector_name']
+        self.selector_recalculate = selector['recalculate']
 
 
     def train_test_split(self):
@@ -178,6 +239,7 @@ class Modeling(object):
 
 
     def get_model_id(self):
+        """Combine unique model id."""
         return f"{self.dimension_value}_{self.selector_type}_{self.selector_name}"
 
 
@@ -185,14 +247,14 @@ class Modeling(object):
         return os.path.isfile(self.get_model_id() + '.pkl')
 
 
-    def create_model(self):
+    def fit_current_selector(self):
         """
         Create a model for current dimension value with current selector.
 
         """
-        if self.model_exists and not self.selector_recalculate:
+        if self.model_exists() and not self.selector_recalculate:
             self.logger.debug(f"The model {self.get_model_id()} exists for dimension value {self.dimension_value} and recalculation is not requested.")
-            return
+            return 'model_exists'
 
         # An appropriate selector returns a model-wrapper
         self.logger.debug(f"Find the best model for dimension value '{self.dimension_value}' with selector {self.selector_type}")
@@ -200,39 +262,22 @@ class Modeling(object):
         
         if model.get_best_model():
             model.fit()
-            self.save_model(model)
+            return model
 
         else:
             self.logger.warning(f"Cannot select a model with parameters above.")
+            return None
 
 
-    def save_model(self, model):
+    def save_model(self, model_id, model):
 
-        model_id = self.get_model_id()
+        self.logger.debug(f"Save model {model_id}.")
+
         model_file_name = os.path.join(self.model_base_folder, f"{model_id}.pkl")
         plot_file_name = os.path.join(self.model_base_folder, f"{model_id}.png")
 
-        self.logger.debug(f"Saving result for {model_id} ...")
-
-        smape = model.smape_score(model.y_test, model.best_y_pred)
-        rmse = model.rmse_score(model.y_test, model.best_y_pred)
-
-        self.logger.debug(f"SMAPE = {smape}, RMSE = {rmse}")
-
         self.to_png(model.y_train, model.y_test, model.best_y_pred, plot_file_name)
         self.to_pkl(model.best_model, model_file_name)
-
-        result = {
-            'id': model_id,
-            'dimension_value': self.dimension_value,
-            'model_type': self.selector_type,
-            'model_name': model_id,
-            'params': model.best_params,
-            'y_pred': model.best_y_pred,
-            'rmse': rmse,
-            'smape': smape,
-            }
-        self.models.append(result)
 
 
     def to_pkl(self, model, model_file_name):

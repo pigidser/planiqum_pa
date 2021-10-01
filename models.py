@@ -92,6 +92,7 @@ class BaseSelector(object):
             self.best_y_pred = best_y_pred
             self.best_params = best_params
             self.best_model = best_model
+            self.metric_value = least_error
 
             self.logger.debug(f"Found the best model with parameters: {self.best_params}.")
 
