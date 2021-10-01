@@ -102,7 +102,7 @@ class Modeling(object):
             self.logger.warning(f"Define a metric as string name")
 
 
-    def add_selector(self, selector_type, selector_init_params, selector_name='Noname', recalculate=True):
+    def add_selector(self, selector_type, selector_init_params, selector_name='Noname'):
 
         if selector_type not in selector_list.keys():
             self.logger.warning("Selector type {model_type} is not supported.")
@@ -119,7 +119,6 @@ class Modeling(object):
             'selector_type': selector_type,
             'selector_init_params': selector_init_params,
             'selector_name': selector_name,
-            'recalculate': recalculate,
             })
 
         self.logger.debug(f"Selector '{selector_type}' is added with params {selector_init_params} and name '{selector_name}'.")
@@ -227,7 +226,6 @@ class Modeling(object):
         self.selector_type = selector['selector_type']
         self.selector_init_params = selector['selector_init_params']
         self.selector_name = selector['selector_name']
-        self.selector_recalculate = selector['recalculate']
 
 
     def train_test_split(self):
@@ -252,10 +250,6 @@ class Modeling(object):
         Create a model for current dimension value with current selector.
 
         """
-        if self.model_exists() and not self.selector_recalculate:
-            self.logger.debug(f"The model {self.get_model_id()} exists for dimension value {self.dimension_value} and recalculation is not requested.")
-            return 'model_exists'
-
         # An appropriate selector returns a model-wrapper
         self.logger.debug(f"Find the best model for dimension value '{self.dimension_value}' with selector {self.selector_type}")
         model = self.selector(self, self.selector_init_params)
