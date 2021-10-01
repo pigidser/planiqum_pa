@@ -123,7 +123,8 @@ class Modeling(object):
 
         self.logger.debug(f"Selector '{selector_type}' is added with params {selector_init_params} and name '{selector_name}'.")
         
-        return True
+        return self
+
 
     def run(self):
 
@@ -169,16 +170,22 @@ class Modeling(object):
 
         result = dict()
         model_list = list()
+
         # Find models with each selector.
         for selector in self.selectors:
+            
             self.set_selector(selector)
             model_id = self.get_model_id()
+            # Spent time.
+            t0 = time()
             model = self.fit_current_selector()
+            duration = round(time() - t0, 1)
             # Model result.
             result[self.selector_type] = dict()
             result[self.selector_type]['model_id'] = model_id
             result[self.selector_type]['model_type'] = self.selector_type
             result[self.selector_type]['model_name'] = model_id
+            result[self.selector_type]['search_time'] = duration
 
             if not model is None:
                 result[self.selector_type]['params'] = model.best_params
@@ -244,7 +251,7 @@ class Modeling(object):
 
     def fit_current_selector(self):
         """
-        Create a model for current dimension value with current selector.
+        Create a model for current dimension value with the current selector.
 
         """
         # An appropriate selector returns a model-wrapper

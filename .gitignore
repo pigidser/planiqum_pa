@@ -1,0 +1,7 @@
+test.py
+*.pkl
+*.png
+data/
+__pycache*/
+notebooks/
+logs/
