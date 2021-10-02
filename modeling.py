@@ -204,9 +204,9 @@ class Modeling(object):
         result = dict()
         model_list = list()
 
-        # Iterate over all selectors saving results.
+        # Iterate over all selectors and save results.
         for selector in self.selectors:
-            
+            # Set current selector and get model_id
             self.set_selector(selector)
             model_id = self.get_model_id()
             # Elapsed time for search.

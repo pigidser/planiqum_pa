@@ -16,8 +16,8 @@ class Dataset(object):
     Represent dataset and provide initial checks and transformations.
     Parameters
     ----------
-        filename : string
-            File name without path.
+        source : string or DataFrame
+            If string then it is file name without path.
         target_col:
             Must be column name with target values.
         discrete_interval:
@@ -29,37 +29,50 @@ class Dataset(object):
         target_col
     """
 
-    def __init__(self, filename, target_col, discrete_interval, date_col=None, dimension_col=None):
+    def __init__(self, source, target_col, discrete_interval, date_col=None, dimension_col=None):
 
         super().__init__()
         self.logger = logging.getLogger('planiqum_predictive_analitics.' + __name__)
-        if not os.path.isfile(filename):
-            self.logger.error(f"Data file '{filename}' not found!")
-            raise Exception
 
-        self.filename = filename
+        self.init_data(source)
 
         if discrete_interval not in ['day', 'week', 'month', 'period']:
             self.logger.error(f"Discrete interval must be one of 'day', 'week', 'month', 'period'!")
             raise Exception
         self.discrete_interval = discrete_interval
 
-        if isinstance(dimension_col, list):
-            self.logger.error(f"Parameter dimension_col must represent a single field! (Multi-dimension will be supported later)")
+        if not isinstance(dimension_col, str):
+            self.logger.error(f"Parameter dimension_col must represent a single field!")
             raise Exception
         
         self.date_col = date_col
         self.dimension_col = dimension_col
         self.target_col = target_col
 
-        self.load()
         self.check_columns_exist()
         self.verify_intervals()
 
 
-    def load(self):
-        self.data = pd.read_csv(self.filename)
-        self.logger.debug(f"Data is loaded with length: {self.data.shape[0]}")
+    def init_data(self, source):
+        """
+        Initialize data from csv-file or from passed DataFrame.
+        
+        """
+        if isinstance(source, str):
+            if os.path.isfile(source):
+                self.data = pd.read_csv(self.source)
+            else:
+                self.logger.error(f"File '{source}' not found!")
+                raise Exception
+
+        elif isinstance(source, pd.DataFrame):
+            self.data = source
+
+        else:
+            self.logger.error(f"Parameter 'source' should be string or DataFrame!")
+            raise Exception
+
+        self.logger.debug(f"Data initialized with length: {self.data.shape[0]}")
 
 
     def check_columns_exist(self):

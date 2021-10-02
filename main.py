@@ -173,8 +173,13 @@ def main():
 
             ## Test 4 - monthly interval
 
+            import pandas as pd
+
+            filename = './data/sales_sku.csv'
+            source = pd.read_csv(filename)
+
             data = Dataset(
-                filename='./data/sales_sku.csv',
+                source=source,
                 target_col='qty',
                 discrete_interval='month',
                 date_col='date',
