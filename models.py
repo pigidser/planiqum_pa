@@ -337,6 +337,7 @@ class ArimaSelector(BaseSelector):
             seasonal=seasonal,
             m=m,
             # D=0,
+            n_jobs=-1,
             )))
 
         model = pipeline.Pipeline(steps)

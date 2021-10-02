@@ -5,3 +5,4 @@ data/
 __pycache*/
 notebooks/
 logs/
+model_base/

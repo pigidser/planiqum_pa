@@ -103,7 +103,36 @@ class Modeling(object):
 
 
     def add_selector(self, selector_type, selector_init_params, selector_name='Noname'):
+        """
+        ARIMA
+            seasonal = [True, False]
+            m = [1]
+            stepwise = [True]
+            use_boxcox = ['auto']
+            use_date_featurizer = [False]
+            with_day_of_week = [True, False],
+            with_day_of_month = [True, False]
+            use_fourier_featurizer = [False]
+            fourier_featurizer_m = [None]
+            fourier_featurizer_k = [None]
 
+        HOLTWINTERS
+            trend = ['add', 'mul', None]       # Type of trend component.
+            damped_trend = [True, False]       # Should the trend component be damped.
+            seasonal = ['add', 'mul', None]    # Type of seasonal component.
+            seasonal_periods = None            # The number of periods in a complete seasonal cycle
+            use_boxcox = ['auto']              # Should the Box-Cox transform be applied to the data first?
+            remove_bias = [True, False]        # Remove bias from forecast values
+
+        PROPHET
+            growth = ['linear']
+            yearly_seasonality = [True, False]       # Fit yearly seasonality.
+            weekly_seasonality = [True, False]       # Fit weekly seasonality.
+            daily_seasonality = [True, False]        # Fit daily seasonality.
+            seasonality_mode = ['additive', 'multiplicative']
+            freq = None
+
+        """
         if selector_type not in selector_list.keys():
             self.logger.warning("Selector type {model_type} is not supported.")
             return False
@@ -147,6 +176,10 @@ class Modeling(object):
 
 
     def set_dimension(self, dimension_value=None):
+        """
+        Set current dimension value and prepare time series.
+
+        """
         self.logger.debug(f"Get time series for {'entire dataset' if dimension_value is None else dimension_value}.")
 
         if dimension_value is None:
@@ -158,56 +191,58 @@ class Modeling(object):
             # Get a part of dataset for the asked dimension_value.
             self.dimension_value = dimension_value
             self.ts = self.dataset.data[self.dataset.data[self.dataset.dimension_col]==self.dimension_value]
+
+        # Split the data for training and test.
+        self.train_test_split()
         
 
     def fit_selectors(self):
         """
-        Create models for self.dimension_value with all selectors.
+        Apply selectors sequentially to find the best model for the current dimension value.
 
         """
-        # Splitting for particular ts
-        self.train_test_split()
-
         result = dict()
         model_list = list()
 
-        # Find models with each selector.
+        # Iterate over all selectors saving results.
         for selector in self.selectors:
             
             self.set_selector(selector)
             model_id = self.get_model_id()
-            # Spent time.
+            # Elapsed time for search.
             t0 = time()
             model = self.fit_current_selector()
-            duration = round(time() - t0, 1)
-            # Model result.
-            result[self.selector_type] = dict()
-            result[self.selector_type]['model_id'] = model_id
-            result[self.selector_type]['model_type'] = self.selector_type
-            result[self.selector_type]['model_name'] = model_id
-            result[self.selector_type]['search_time'] = duration
+            search_time = round(time() - t0, 1)
+            # Model info.
+            result[model_id] = dict()
+            result[model_id]['model_id'] = model_id
+            result[model_id]['model_type'] = self.selector_type
+            result[model_id]['model_name'] = model_id
+            result[model_id]['search_time'] = search_time
 
             if not model is None:
-                result[self.selector_type]['params'] = model.best_params
-                result[self.selector_type]['y_pred'] = model.best_y_pred
-                result[self.selector_type]['metric_name'] = self.metric
-                result[self.selector_type]['metric_value'] = model.metric_value
-                result[self.selector_type]['result'] = 'ok'
+                result[model_id]['params'] = model.best_params
+                result[model_id]['y_pred'] = model.best_y_pred
+                result[model_id]['metric_name'] = self.metric
+                result[model_id]['metric_value'] = model.metric_value
+                result[model_id]['result'] = 'ok'
                 # Retain data to define the best model for the current demension value.
                 model_list.append((self.selector_type, model_id, model, model.metric_value))
 
             else:
                 # The selector is unable to find a model with selected parameters.
-                result[self.selector_type]['result'] = 'fail'
+                result[model_id]['result'] = 'fail'
 
-        # Return the best model.
+        # Indicate the best model.
         if len(model_list) > 0:
+
             sel, id, mod, val = zip(*model_list)
-            m = np.argmax(val)
+            m = np.argmin(val)
             best_selector_type = sel[m]
-            best_model = mod[m]
             best_model_id = id[m]
-            result[best_selector_type]['best_metric'] = 1
+            best_model = mod[m]
+            
+            result[best_model_id]['best_metric'] = 1
 
             # Add result
             self.results[self.dimension_value] = result
@@ -215,9 +250,10 @@ class Modeling(object):
             # Save all or the best model only
             if self.save_mode == 'best':
                 self.save_model(best_model_id, best_model)
+
             else:
-                for sel, id, mod, val in model_list:
-                    self.save_model(id, mod)
+                for _, model_id, model, _ in model_list:
+                    self.save_model(model_id, model)
 
             self.logger.debug(f"Found the best model for dimension value '{self.dimension_value}'.")
 
