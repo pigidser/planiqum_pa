@@ -245,7 +245,11 @@ class ArimaSelector(BaseSelector):
 
         # Get the Box-Cox lambda parameter that can transform the data in the best way
         if ('auto' in use_boxcox) or (True in use_boxcox):
-            self.boxcox_lambda = self.get_boxcox_lambda(self.y_train)
+            try:
+                self.boxcox_lambda = self.get_boxcox_lambda(self.y_train)
+            except:
+                self.boxcox_lambda = False
+                
         if 'auto' in use_boxcox:
             # Decide if transformation is needed
             use_boxcox = [self.is_boxcox_needed(self.boxcox_lambda)]
