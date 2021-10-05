@@ -23,13 +23,14 @@ class Modeling(object):
     Build and estimate models.
 
     """
-    def __init__(self, dataset, folder, n_intervals_estimation, save_mode='all'):
+    def __init__(self, dataset, folder, n_intervals_estimation, save_mode='all', n_intervals_prediction=None):
         super().__init__()
         self.logger = logging.getLogger('planiqum_predictive_analitics.' + __name__)
         self.dataset = dataset
         self.define_dimension_values()
         self.load_model_base(folder)
         self.n_intervals_estimation = n_intervals_estimation
+        self.n_intervals_prediction = n_intervals_estimation if n_intervals_prediction is None else n_intervals_prediction
         if save_mode not in ['all', 'best']:
             save_mode = 'best'
         self.save_mode = save_mode
@@ -223,6 +224,7 @@ class Modeling(object):
             if not model is None:
                 result[model_id]['params'] = model.best_params
                 result[model_id]['y_pred'] = model.best_y_pred
+                result[model_id]['y_pred_future'] = model.best_y_pred_future
                 result[model_id]['metric_name'] = self.metric
                 result[model_id]['metric_value'] = model.metric_value
                 result[model_id]['result'] = 'ok'
@@ -272,7 +274,26 @@ class Modeling(object):
         
         self.train = self.ts.iloc[:len(self.ts) - self.n_intervals_estimation]
         self.test = self.ts.iloc[-self.n_intervals_estimation:]
-        
+
+        # Prepare the future dataset.
+        if not self.dataset.date_col is None:
+
+            if self.dataset.discrete_interval == 'day':
+                freq = 'D'
+            elif self.dataset.discrete_interval == 'week':
+                freq = 'W'
+            elif self.dataset.discrete_interval == 'month':
+                freq = 'M'
+            
+            last_date = self.test[self.dataset.date_col].max()
+            dates = pd.date_range(
+                start=last_date,
+                periods=self.n_intervals_prediction + 1,
+                freq=freq)
+            dates = dates[dates > last_date]
+            dates = dates[:self.n_intervals_prediction]
+            self.future = pd.DataFrame({self.dataset.date_col: dates})
+
         self.logger.debug(f"Train test split. Train part len={len(self.train)}, test part len={len(self.test)}.")
 
 
@@ -295,7 +316,7 @@ class Modeling(object):
         model = self.selector(self, self.selector_init_params)
         
         if model.get_best_model():
-            model.fit()
+            model.fit_predict()
             return model
 
         else:

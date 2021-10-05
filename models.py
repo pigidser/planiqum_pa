@@ -5,6 +5,7 @@ import logging
 import traceback
 import os, sys
 from time import time
+from datetime import timedelta
 import numpy as np
 from numpy.core.getlimits import _register_type
 from numpy.core.numeric import Inf
@@ -97,14 +98,14 @@ class BaseSelector(object):
             self.logger.debug(f"Found the best model with parameters: {self.best_params}.")
 
         else:
-            self.logger.warning(f"Cannot create a model. Bad time series or try other parameters.")
+            self.logger.warning(f"Cannot find a model. Bad time series or try other parameters.")
 
         return found
 
 
     def fit(self):
         if self.best_model is None:
-            self.logger.error(f"Method 'fit' run after 'get_best_model'!")
+            self.logger.error(f"Method 'fit' should run after 'get_best_model'!")
             raise Exception
 
 
@@ -284,11 +285,13 @@ class ArimaSelector(BaseSelector):
         
         # Arima requires X_train with timedate stamp for the Date Featurizer
         if self.modeling.dataset.date_col is None:
-            self.X_train, self.X_test = None, None
+            self.X_train, self.X_test, self.X_future = None, None, None
+
         else:
             # X_ part available only when column date_col is specified 
             self.X_train = self.modeling.train[[self.modeling.dataset.date_col]]
-            self.X_test = self.modeling.test[[self.modeling.dataset.date_col]]    
+            self.X_test = self.modeling.test[[self.modeling.dataset.date_col]]
+            self.X_future = self.modeling.future[[self.modeling.dataset.date_col]]
 
 
     def get_model(self, params, mode):
@@ -357,19 +360,38 @@ class ArimaSelector(BaseSelector):
         return model
 
 
-    def predict(self, model, params):
+    def predict(self, model, params, mode='test'):
         super().predict()
-        return model.predict(X=self.X_test, n_periods=self.modeling.n_intervals_estimation)
+
+        if mode == 'test':
+            n_periods = self.modeling.n_intervals_estimation
+            X = self.X_test
+
+        elif mode == 'future':
+            n_periods = self.modeling.n_intervals_prediction
+            X = self.X_future
+
+        else:
+            raise Exception(f"Parameter mode should be 'test' or 'future' (not '{mode}')!")
+
+        return model.predict(n_periods=n_periods, X=X)
 
     
-    def fit(self):
+    def fit_predict(self):
+        """
+        Fit the best model with the test dataset to get a full-trained model and make future prediction.
+        Arima supports an update method that allows partly-retraining mode.
 
-        # Update the pipeline with the test part 
-        if self.best_params['use_date_featurizer']:
-            self.best_model.update(self.y_test, self.X_test)
+        """
+        # if self.best_params['use_date_featurizer']:
+        #     # If we trained the model with exogeneous array, we have to provide it again.
+        #     self.best_model.update(self.y_test, self.X_test)
         
-        else:
-            self.best_model.update(self.y_test)
+        # else:
+        #     self.best_model.update(self.y_test)
+
+        self.best_model.update(self.y_test, self.X_test)
+        self.best_y_pred_future = self.predict(self.best_model, self.best_params, 'future')
 
 
 
@@ -510,14 +532,29 @@ class HoltWintersSelector(BaseSelector):
         return fitted
 
 
-    def predict(self, model, params):
+    def predict(self, model, params, mode='test'):
         super().predict()
-        return model.forecast(steps=self.modeling.n_intervals_estimation)
+
+        if mode == 'test':
+            n_periods = self.modeling.n_intervals_estimation
+
+        elif mode == 'future':
+            n_periods = self.modeling.n_intervals_prediction
+
+        else:
+            raise Exception(f"Parameter mode should be 'test' or 'future' (not '{mode}')!")
+
+        return model.forecast(steps=n_periods)
 
     
-    def fit(self):
+    def fit_predict(self):
+        """
+        Fit the best model with the test dataset to get a full-trained model and make future prediction.
+        Holt-Winters does not support partly-retraining mode.
 
+        """
         self.best_model = self.get_model(self.best_params, 'full')
+        self.best_y_pred_future = self.predict(self.best_model, self.best_params, 'future')
 
 
 
@@ -606,11 +643,14 @@ class ProphetSelector(BaseSelector):
             self.logger.error(f"Prophet requires an interval field that can be cast to DateTime.")
             raise Exception
             
-        # Prophet requires dataframe with ds and y columns
+        # Prophet requires dataframe with ds and y columns.
         self.ds_y_train = self.modeling.train[[self.modeling.dataset.date_col, self.modeling.dataset.target_col]]
         self.ds_y_train.columns = ['ds', 'y']
         self.ds_y_test = self.modeling.test[[self.modeling.dataset.date_col, self.modeling.dataset.target_col]]
         self.ds_y_test.columns = ['ds', 'y']
+        # Future dataset consists of ds column only.
+        self.ds_y_future = self.modeling.future[[self.modeling.dataset.date_col]]
+        self.ds_y_future.columns = ['ds']
 
 
     def get_model(self, params, mode):
@@ -643,18 +683,36 @@ class ProphetSelector(BaseSelector):
         return model
 
 
-    def predict(self, model, params):
+    def predict(self, model, params, mode='test'):
         super().predict()
 
-        freq = params['freq']
-        future = model.make_future_dataframe(periods=self.modeling.n_intervals_estimation, freq=freq)
-        forecast = model.predict(future)
-        
-        return forecast['yhat'][-self.modeling.n_intervals_estimation:]
+        if mode == 'test':
+            n_periods = self.modeling.n_intervals_estimation
+            X = self.ds_y_test
+
+        elif mode == 'future':
+            n_periods = self.modeling.n_intervals_prediction
+            X = self.ds_y_future
+
+        else:
+            raise Exception(f"Parameter mode should be 'test' or 'future' (not '{mode}')!")
+
+        # freq = params['freq']
+        # future = model.make_future_dataframe(periods=self.modeling.n_intervals_estimation, freq=freq)
+        # forecast = model.predict(future)
+        # return forecast['yhat'][-self.modeling.n_intervals_estimation:]
+
+        forecast = model.predict(X)
+        return forecast['yhat'][-n_periods:]
 
     
-    def fit(self):
+    def fit_predict(self):
+        """
+        Fit the best model with the test dataset to get a full-trained model and make future prediction.
+        Prophet does not support partly-retraining mode.
 
+        """
         self.best_model = self.get_model(self.best_params, 'full')
+        self.best_y_pred_future = self.predict(self.best_model, self.best_params, 'future')
 
 

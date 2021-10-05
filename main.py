@@ -70,16 +70,16 @@ def main():
                 dimension_col='ProductId')
 
             # Create modeling object and define number of intervals for estimation.
-            modeling = Modeling(data, "model_base", n_intervals_estimation=28, save_mode='best')
+            modeling = Modeling(data, "model_base", n_intervals_estimation=28, save_mode='best', n_intervals_prediction=14)
 
             # Our dataset includes many products. Let's choose several for test.
-            # modeling.define_dimension_values([370, 2354])
+            modeling.define_dimension_values([370, 2354])
             
-            # Add ARIMA
-            modeling.add_selector(
-                selector_type='arima',
-                selector_init_params={'use_boxcox' : 'auto', 'use_date_featurizer': True, 'with_day_of_week' : True, 'with_day_of_month' : False, 'stepwise': True,},
-                selector_name='daily_bc_false')
+            # # Add ARIMA
+            # modeling.add_selector(
+            #     selector_type='arima',
+            #     selector_init_params={'use_boxcox' : 'auto', 'use_date_featurizer': True, 'with_day_of_week' : True, 'with_day_of_month' : False, 'stepwise': True,},
+            #     selector_name='daily_bc_false')
 
             # # Add Holt-Winter's
             # modeling.add_selector(
@@ -87,11 +87,11 @@ def main():
             #     selector_init_params={'trend': 'mul', 'damped_trend': False, 'seasonal': 'add', 'seasonal_periods': 7, 'use_boxcox': 'auto', 'remove_bias': True,},
             #     selector_name='test1')
 
-            # # Add Prophet
-            # modeling.add_selector(
-            #     selector_type='prophet',
-            #     selector_init_params={'freq': 'D', 'growth': 'linear', 'yearly_seasonality': False, 'weekly_seasonality': True, 'daily_seasonality': False, 'seasonality_mode': 'additive',},
-            #     selector_name='test1')
+            # Add Prophet
+            modeling.add_selector(
+                selector_type='prophet',
+                selector_init_params={'freq': 'D', 'growth': 'linear', 'yearly_seasonality': False, 'weekly_seasonality': True, 'daily_seasonality': False, 'seasonality_mode': 'additive',},
+                selector_name='test1')
 
             # Select a metric
             modeling.set_metric('rmse')
@@ -104,20 +104,20 @@ def main():
             
 
 
-            # ## Test 2 - weekly interval
+            ## Test 2 - weekly interval
 
-            # filename = './data/Sales_Product_Price_Store1.csv'
-            # source = pd.read_csv(filename)
+            filename = './data/Sales_Product_Price_Store1.csv'
+            source = pd.read_csv(filename)
 
-            # data = Dataset(
-            #     source=source,
-            #     target_col='Weekly_Units_Sold',
-            #     discrete_interval='week',
-            #     date_col='Date',
-            #     dimension_col='Product')
+            data = Dataset(
+                source=source,
+                target_col='Weekly_Units_Sold',
+                discrete_interval='week',
+                date_col='Date',
+                dimension_col='Product')
 
-            # modeling = Modeling(data, "model_base", n_intervals_estimation=24, save_mode='best')
-            # modeling.define_dimension_values([1])
+            modeling = Modeling(data, "model_base", n_intervals_estimation=24, save_mode='best', n_intervals_prediction=14)
+            modeling.define_dimension_values([1, 2])
 
             # modeling.add_selector(
             #     selector_type='arima',
@@ -139,15 +139,16 @@ def main():
             #     # selector_init_params={'trend': 'add', 'damped_trend': False, 'seasonal': 'mul', 'use_boxcox': True, 'remove_bias': False},
             #     selector_init_params={'seasonal_periods': 52, 'use_boxcox': 'auto'},
             #     selector_name='hw_bc_true')
-            # modeling.add_selector(
-            #     selector_type='prophet',
-            #     selector_init_params={'growth': 'linear', 'yearly_seasonality': True, 'weekly_seasonality': False, 'daily_seasonality': False, 'seasonality_mode': 'additive', 'freq': 'W'},
-            #     selector_name='year_seson')
-            
-            # modeling.set_metric('smape')
-            # modeling.run()
 
-            # print(modeling.results)
+            modeling.add_selector(
+                selector_type='prophet',
+                selector_init_params={'growth': 'linear', 'yearly_seasonality': True, 'weekly_seasonality': False, 'daily_seasonality': False, 'seasonality_mode': 'additive', 'freq': 'W'},
+                selector_name='year_seson')
+            
+            modeling.set_metric('smape')
+            modeling.run()
+
+            print(modeling.results)
 
             # ### Test 3 - monthly interval
 
