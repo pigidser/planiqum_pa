@@ -247,8 +247,9 @@ class ArimaSelector(BaseSelector):
         if ('auto' in use_boxcox) or (True in use_boxcox):
             try:
                 self.boxcox_lambda = self.get_boxcox_lambda(self.y_train)
-            except:
-                self.boxcox_lambda = False
+            except ValueError:
+                self.logger.debug(f"Cannot calculate Box-Cox lambda (ValueError). Switching to use_boxcox=False.")
+                use_boxcox = [False]
                 
         if 'auto' in use_boxcox:
             # Decide if transformation is needed
@@ -440,7 +441,12 @@ class HoltWintersSelector(BaseSelector):
 
         # Get the Box-Cox lambda parameter that can transform the data in the best way
         if ('auto' in use_boxcox) or (True in use_boxcox):
-            self.boxcox_lambda = self.get_boxcox_lambda(self.y_train)
+            try:
+                self.boxcox_lambda = self.get_boxcox_lambda(self.y_train)
+            except ValueError:
+                self.logger.debug(f"Cannot calculate Box-Cox lambda (ValueError). Switching to use_boxcox=False.")
+                use_boxcox = [False]
+
         if 'auto' in use_boxcox:
             # Decide if transformation is needed
             use_boxcox = [self.is_boxcox_needed(self.boxcox_lambda)]
