@@ -331,28 +331,32 @@ class Modeling(object):
         model_file_name = os.path.join(self.model_base_folder, f"{model_id}.pkl")
         plot_file_name = os.path.join(self.model_base_folder, f"{model_id}.png")
 
-        self.to_png(model.y_train, model.y_test, model.best_y_pred, plot_file_name)
-        self.to_pkl(model.best_model, model_file_name)
+        self.to_png(plot_file_name, model.y_train, model.y_test, model.best_y_pred, model.best_y_pred_future)
+        self.to_pkl(model_file_name, model.best_model)
 
 
-    def to_pkl(self, model, model_file_name):
+    def to_pkl(self, model_file_name, model):
         # Save the model
         joblib.dump(model, model_file_name, compress=3)
     
 
-    def to_png(self, y_train, actuals, forecast, plot_file_name):
+    def to_png(self, plot_file_name, y_train, y_test, y_pred, y_pred_future):
         fig = plt.figure(figsize=(16, 8))
         ax = fig.add_subplot(1, 1, 1)
 
         n_train = y_train.shape[0]
-        x = np.arange(n_train + forecast.shape[0])
+        n_test = y_test.shape[0]
+        n_future = y_pred_future.shape[0]
+        x = np.arange(n_train + n_test + n_future)
 
         ax.plot(x[:n_train], y_train, color='blue', label='Training Data')
-        ax.plot(x[n_train:], forecast, color='green', marker='o',
+        ax.plot(x[n_train:n_train + n_test], y_test, color='red', label='Test')
+        ax.plot(x[n_train:n_train + n_test], y_pred, color='green', marker='o',
                 label='Predicted')
-        ax.plot(x[n_train:], actuals, color='red', label='Actual')
+        ax.plot(x[n_train + n_test:], y_pred_future, color='cyan', marker='x',
+                label='Forecast')
         ax.legend(loc='lower left', borderaxespad=0.5)
-        ax.set_title(f"Actuals vs Forecast for dimension value {self.dimension_value}")
-        ax.set_ylabel('Sold units')
+        ax.set_title(f"Test vs Predicted and Forecast for dimension value {self.dimension_value}")
+        ax.set_ylabel('Units')
         plt.savefig(plot_file_name)
         

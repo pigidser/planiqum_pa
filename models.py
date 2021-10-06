@@ -5,7 +5,6 @@ import logging
 import traceback
 import os, sys
 from time import time
-from datetime import timedelta
 import numpy as np
 from numpy.core.getlimits import _register_type
 from numpy.core.numeric import Inf
