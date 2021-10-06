@@ -90,7 +90,7 @@ def main():
             # Add Prophet
             modeling.add_selector(
                 selector_type='prophet',
-                selector_init_params={'freq': 'D', 'growth': 'linear', 'yearly_seasonality': False, 'weekly_seasonality': True, 'daily_seasonality': False, 'seasonality_mode': 'additive',},
+                selector_init_params={'growth': 'linear', 'yearly_seasonality': False, 'weekly_seasonality': True, 'daily_seasonality': False, 'seasonality_mode': 'additive',},
                 selector_name='test1')
 
             # Select a metric
@@ -142,7 +142,7 @@ def main():
 
             modeling.add_selector(
                 selector_type='prophet',
-                selector_init_params={'growth': 'linear', 'yearly_seasonality': True, 'weekly_seasonality': False, 'daily_seasonality': False, 'seasonality_mode': 'additive', 'freq': 'W'},
+                selector_init_params={'growth': 'linear', 'yearly_seasonality': True, 'weekly_seasonality': False, 'daily_seasonality': False, 'seasonality_mode': 'additive'},
                 selector_name='year_seson')
             
             modeling.set_metric('smape')
@@ -173,7 +173,7 @@ def main():
             #     selector_name='test2')
             # modeling.add_selector(
             #     selector_type='prophet',
-            #     selector_init_params={'freq': 'MS', 'yearly_seasonality': True, 'seasonality_mode': 'additive'},
+            #     selector_init_params={'yearly_seasonality': True, 'seasonality_mode': 'additive'},
             #     selector_name='test2')
             
             # modeling.set_metric('smape')
@@ -211,7 +211,7 @@ def main():
             #     selector_name='test4')
             # modeling.add_selector(
             #     selector_type='prophet',
-            #     selector_init_params={'freq': 'M', 'yearly_seasonality': True, 'weekly_seasonality': False, 'seasonality_mode': 'additive'},
+            #     selector_init_params={'yearly_seasonality': True, 'weekly_seasonality': False, 'seasonality_mode': 'additive'},
             #     selector_name='test4')
             
             # modeling.set_metric('smape')

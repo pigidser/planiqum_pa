@@ -575,7 +575,6 @@ class ProphetSelector(BaseSelector):
         weekly_seasonality = [True, False]       # Fit weekly seasonality.
         daily_seasonality = [True, False]        # Fit daily seasonality.
         seasonality_mode = ['additive', 'multiplicative']
-        freq = None
 
         for param in params:
             
@@ -609,20 +608,8 @@ class ProphetSelector(BaseSelector):
                 else:
                     self.warning_param_bad_value(param, params[param])
 
-            elif param == 'freq':
-                freq = params[param]
-
             else:
                 self.warning_param_unknown(param)
-
-        if freq is None:
-            if self.modeling.dataset.discrete_interval == 'day':
-                freq = 'D'
-            else:
-                self.logger.error(f"The frequency parameter is mandatory if the discrete interval is not equal to 'day'.")
-                self.logger.info(f"Example of freq: 'D' for day, 'MS' for month start, 'M' for month end.")
-                self.logger.info(f"https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#timeseries-offset-aliases")
-                raise Exception
 
         # All models for brute force
         for g in growth:
@@ -632,7 +619,7 @@ class ProphetSelector(BaseSelector):
                         for s in seasonality_mode:
                             self.params_list.append({
                                 'growth': g, 'yearly_seasonality': y, 'weekly_seasonality': w,
-                                'daily_seasonality': d, 'seasonality_mode': s, 'freq': freq})
+                                'daily_seasonality': d, 'seasonality_mode': s})
 
 
     def dataset_adjustment(self):
@@ -695,11 +682,6 @@ class ProphetSelector(BaseSelector):
 
         else:
             raise Exception(f"Parameter mode should be 'test' or 'future' (not '{mode}')!")
-
-        # freq = params['freq']
-        # future = model.make_future_dataframe(periods=self.modeling.n_intervals_estimation, freq=freq)
-        # forecast = model.predict(future)
-        # return forecast['yhat'][-self.modeling.n_intervals_estimation:]
 
         forecast = model.predict(X)
         return forecast['yhat'][-n_periods:]
